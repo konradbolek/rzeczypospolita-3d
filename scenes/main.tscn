@@ -17,6 +17,10 @@ position = Vector2(600, 400)
 zoom = Vector2(0.7, 0.7)
 script = ExtResource("3_cam")
 
+[node name="BattleField" type="Node3D" parent="."]
+visible = false
+script = ExtResource("6_bf")
+
 [node name="UI" type="CanvasLayer" parent="."]
 
 [node name="TopBar" type="PanelContainer" parent="UI"]
@@ -212,7 +216,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-color = Color(0.04, 0.05, 0.06, 0.94)
+color = Color(0, 0, 0, 0)
 script = ExtResource("5_bov")
 
 [node name="Top" type="PanelContainer" parent="UI/BattleOverlay"]
@@ -232,7 +236,7 @@ text = "Walka"
 horizontal_alignment = 1
 vertical_alignment = 1
 
-[node name="BattleView" type="SubViewportContainer" parent="UI/BattleOverlay"]
+[node name="BattleView" type="Control" parent="UI/BattleOverlay"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -242,16 +246,6 @@ offset_bottom = -8.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-stretch = true
-
-[node name="SubViewport" type="SubViewport" parent="UI/BattleOverlay/BattleView"]
-own_world_3d = true
-handle_input_locally = true
-size = Vector2i(1280, 640)
-render_target_update_mode = 3
-
-[node name="BattleField" type="Node3D" parent="UI/BattleOverlay/BattleView/SubViewport"]
-script = ExtResource("6_bf")
 
 [node name="ResultBox" type="PanelContainer" parent="UI/BattleOverlay"]
 visible = false

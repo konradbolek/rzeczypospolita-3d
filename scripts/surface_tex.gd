@@ -1,0 +1,108 @@
+extends RefCounted
+## Powtarzalne tekstury albedo (PNG w assets/textures). Jedna instancja materiału na parę (id, odcień).
+
+const DIR := "res://assets/textures/"
+## Tekstury, które same niosą kolor — albedo_color tylko lekko je podbarwia.
+const PRECOLORED := {
+	"grass": true, "dirt": true, "mud": true, "sand": true, "rock": true,
+	"water": true, "wood": true, "stone": true, "roof": true, "foliage": true,
+	"wheat": true, "gold": true, "skin": true,
+}
+const SCALE := {
+	"grass": 1.15, "dirt": 1.2, "mud": 1.25, "sand": 1.1, "rock": 1.35,
+	"water": 0.85, "wood": 1.55, "stone": 1.15, "roof": 1.45, "foliage": 1.05,
+	"cloth": 3.4, "metal": 2.6, "skin": 3.8, "wheat": 1.5, "gold": 2.2,
+}
+
+static var _tex: Dictionary = {}
+static var _mats: Dictionary = {}
+
+
+static func tex(id: String) -> Texture2D:
+	if _tex.has(id):
+		return _tex[id]
+	var path := DIR + id + ".png"
+	var t: Texture2D = load(path) if ResourceLoader.exists(path) else null
+	_tex[id] = t
+	return t
+
+
+## Wymuszone id albo dobór po kolorze / metaliczności. Zwraca {id, tint, scale}.
+static func style(col: Color, metal: float = 0.0, surf: String = "") -> Dictionary:
+	var id := surf
+	if id == "":
+		id = _auto(col, metal)
+	var scale := float(SCALE.get(id, 1.2))
+	var tint := col
+	if PRECOLORED.has(id):
+		# Tekstura jest już zielona / kamienna / dachówkowa — kolor mesha tylko ją przesuwa.
+		tint = Color.WHITE.lerp(col, 0.18)
+	return {"id": id, "tint": tint, "scale": scale}
+
+
+static func _auto(col: Color, metal: float) -> String:
+	if metal > 0.22:
+		return "metal"
+	if col.r > 0.72 and col.g > 0.52 and col.b > 0.38 and col.r > col.g and col.g > col.b * 0.85 and col.s < 0.62 and col.v > 0.7:
+		return "skin"
+	if col.r > 0.72 and col.g > 0.5 and col.b < 0.42 and col.g > col.b * 1.4:
+		return "gold"
+	if col.s < 0.16 or (col.s < 0.24 and col.v > 0.45 and col.v < 0.92):
+		return "stone"
+	if col.r > 0.5 and col.g < 0.32 and col.b < 0.26 and col.r > col.g * 2.2:
+		return "roof"
+	if col.r > col.g and col.g >= col.b * 0.85 and col.b < 0.45 and col.r < 0.78 and col.s > 0.22:
+		return "wood"
+	if col.g > col.r * 1.25 and col.g > col.b * 1.15 and col.g > 0.22 and col.r < 0.5:
+		return "foliage" if col.v < 0.55 else "grass"
+	if col.b > col.r and col.b > col.g and col.s > 0.35 and col.v > 0.45 and col.v < 0.75 and col.h > 0.5 and col.h < 0.7 and col.r < 0.25:
+		return "water"
+	if col.h > 0.10 and col.h < 0.18 and col.v > 0.65 and col.s > 0.35:
+		return "wheat"
+	return "cloth"
+
+
+static func material(col: Color, rough: float = 0.84, metal: float = 0.0, emit: float = 0.0, surf: String = "") -> StandardMaterial3D:
+	var st := style(col, metal, surf)
+	var tint: Color = st["tint"]
+	var id := str(st["id"])
+	var key := "%s:%d:%d:%d:%d:%d:%d" % [
+		id, int(tint.r * 255.0), int(tint.g * 255.0), int(tint.b * 255.0),
+		int(rough * 100.0), int(metal * 100.0), int(emit * 100.0),
+	]
+	if _mats.has(key):
+		return _mats[key]
+	var m := StandardMaterial3D.new()
+	m.albedo_color = tint
+	m.roughness = rough
+	m.metallic = metal
+	var t := tex(id)
+	if t != null:
+		m.albedo_texture = t
+		m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		m.uv1_triplanar = true
+		m.uv1_scale = Vector3.ONE * float(st["scale"])
+		m.uv1_triplanar_sharpness = 1.35
+	if emit > 0.0:
+		m.emission_enabled = true
+		m.emission = col
+		m.emission_energy_multiplier = emit
+	_mats[key] = m
+	return m
+
+
+## Heksy terenu: UV czapy cylindra, bez triplanaru (dużo instancji). Vertex color przyciemnia mgłę.
+static func terrain_material(id: String) -> StandardMaterial3D:
+	var key := "terrain:" + id
+	if _mats.has(key):
+		return _mats[key]
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color.WHITE
+	m.albedo_texture = tex(id)
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	m.uv1_scale = Vector3(0.92, 1.15, 0.92)
+	m.vertex_color_use_as_albedo = true
+	m.vertex_color_is_srgb = true
+	m.roughness = 0.92
+	_mats[key] = m
+	return m

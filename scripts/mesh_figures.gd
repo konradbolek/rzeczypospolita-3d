@@ -20,13 +20,13 @@ const CLOTH := Color(0.93, 0.9, 0.82)
 const PINE := Color(0.13, 0.36, 0.16)
 const OAK := Color(0.2, 0.45, 0.16)
 const DARK := Color(0.1, 0.08, 0.06)
+const Surf := preload("res://scripts/surface_tex.gd")
 
 static var _box: BoxMesh
 static var _sphere: SphereMesh
 static var _cyl: CylinderMesh
 static var _hex: CylinderMesh
 static var _cone: CylinderMesh
-static var _mats: Dictionary = {}
 
 
 static func _ensure() -> void:
@@ -59,20 +59,8 @@ static func _ensure() -> void:
 	_cone.rings = 1
 
 
-static func _mat(col: Color, rough: float = 0.84, metal: float = 0.0, emit: float = 0.0) -> StandardMaterial3D:
-	var key := "%d:%d:%d:%d:%d:%d" % [int(col.r * 255.0), int(col.g * 255.0), int(col.b * 255.0), int(rough * 100.0), int(metal * 100.0), int(emit * 100.0)]
-	if _mats.has(key):
-		return _mats[key]
-	var m := StandardMaterial3D.new()
-	m.albedo_color = col
-	m.roughness = rough
-	m.metallic = metal
-	if emit > 0.0:
-		m.emission_enabled = true
-		m.emission = col
-		m.emission_energy_multiplier = emit
-	_mats[key] = m
-	return m
+static func _mat(col: Color, rough: float = 0.84, metal: float = 0.0, emit: float = 0.0, surf: String = "") -> StandardMaterial3D:
+	return Surf.material(col, rough, metal, emit, surf)
 
 
 static func _basis_y(dir: Vector3, z_hint: Vector3) -> Basis:
@@ -607,8 +595,18 @@ static func _windows(parent: Node3D, keep_pos: Vector3, half: float, keep_h: flo
 
 ## Kopalnie, artefakty, porty, sceneria i przeszkody bitwy (bryły, nie billboardy).
 
-static func M(c: Color) -> StandardMaterial3D:
-	return _mat(c)
+static func M(c: Color, surf: String = "") -> StandardMaterial3D:
+	return _mat(c, 0.84, 0.0, 0.0, surf)
+
+
+static func disk(parent: Node3D, radius: float, height: float, pos: Vector3, surf: String) -> MeshInstance3D:
+	var m := CylinderMesh.new()
+	m.top_radius = radius
+	m.bottom_radius = radius
+	m.height = height
+	m.radial_segments = 6
+	m.material = Surf.terrain_material(surf)
+	return _mi(parent, m, pos)
 
 
 static func _mi(parent: Node3D, mesh: Mesh, pos: Vector3, rot := Vector3.ZERO, scl := Vector3.ONE) -> MeshInstance3D:
@@ -621,34 +619,34 @@ static func _mi(parent: Node3D, mesh: Mesh, pos: Vector3, rot := Vector3.ZERO, s
 	return mi
 
 
-static func box(parent: Node3D, size: Vector3, pos: Vector3, col: Color, rot := Vector3.ZERO) -> MeshInstance3D:
+static func box(parent: Node3D, size: Vector3, pos: Vector3, col: Color, rot := Vector3.ZERO, surf := "") -> MeshInstance3D:
 	var b := BoxMesh.new()
 	b.size = size
-	b.material = M(col)
+	b.material = M(col, surf)
 	return _mi(parent, b, pos, rot)
 
 
-static func cyl(parent: Node3D, r: float, h: float, pos: Vector3, col: Color, seg := 8, r2 := -1.0, rot := Vector3.ZERO) -> MeshInstance3D:
+static func cyl(parent: Node3D, r: float, h: float, pos: Vector3, col: Color, seg := 8, r2 := -1.0, rot := Vector3.ZERO, surf := "") -> MeshInstance3D:
 	var m := CylinderMesh.new()
 	m.top_radius = r if r2 < 0.0 else r2
 	m.bottom_radius = r
 	m.height = h
 	m.radial_segments = seg
-	m.material = M(col)
+	m.material = M(col, surf)
 	return _mi(parent, m, pos, rot)
 
 
-static func cone(parent: Node3D, r: float, h: float, pos: Vector3, col: Color, seg := 7) -> MeshInstance3D:
-	return cyl(parent, r, h, pos, col, seg, 0.0)
+static func cone(parent: Node3D, r: float, h: float, pos: Vector3, col: Color, seg := 7, surf := "") -> MeshInstance3D:
+	return cyl(parent, r, h, pos, col, seg, 0.0, Vector3.ZERO, surf)
 
 
-static func sph(parent: Node3D, r: float, pos: Vector3, col: Color) -> MeshInstance3D:
+static func sph(parent: Node3D, r: float, pos: Vector3, col: Color, surf := "") -> MeshInstance3D:
 	var m := SphereMesh.new()
 	m.radius = r
 	m.height = r * 2.0
 	m.radial_segments = 10
 	m.rings = 6
-	m.material = M(col)
+	m.material = M(col, surf)
 	return _mi(parent, m, pos)
 
 
@@ -809,17 +807,17 @@ static func scenery(kind: String) -> Node3D:
 			box(root, Vector3(0.26, 0.08, 0.1), Vector3(0.1, 0.06, -0.12), STONE.darkened(0.1), Vector3(0, 0, 0.6))
 		"oak":
 			cyl(root, 0.05, 0.28, Vector3(0, 0.14, 0), WOOD, 6)
-			sph(root, 0.2, Vector3(0, 0.4, 0), OAK)
-			sph(root, 0.12, Vector3(0.12, 0.46, 0.05), OAK.darkened(0.08))
+			sph(root, 0.2, Vector3(0, 0.4, 0), OAK, "foliage")
+			sph(root, 0.12, Vector3(0.12, 0.46, 0.05), OAK.darkened(0.08), "foliage")
 		"pine":
 			cyl(root, 0.04, 0.2, Vector3(0, 0.1, 0), WOOD, 5)
-			cone(root, 0.16, 0.28, Vector3(0, 0.32, 0), PINE, 6)
-			cone(root, 0.12, 0.22, Vector3(0, 0.5, 0), PINE.lightened(0.08), 6)
+			cone(root, 0.16, 0.28, Vector3(0, 0.32, 0), PINE, 6, "foliage")
+			cone(root, 0.12, 0.22, Vector3(0, 0.5, 0), PINE.lightened(0.08), 6, "foliage")
 		"rock":
-			box(root, Vector3(0.28, 0.16, 0.22), Vector3(0, 0.08, 0), Color(0.5, 0.5, 0.52), Vector3(0.1, 0.3, 0))
-			box(root, Vector3(0.16, 0.14, 0.14), Vector3(0.12, 0.12, 0.06), Color(0.62, 0.62, 0.64))
+			box(root, Vector3(0.28, 0.16, 0.22), Vector3(0, 0.08, 0), Color(0.5, 0.5, 0.52), Vector3(0.1, 0.3, 0), "rock")
+			box(root, Vector3(0.16, 0.14, 0.14), Vector3(0.12, 0.12, 0.06), Color(0.62, 0.62, 0.64), Vector3.ZERO, "rock")
 		"bush":
-			sph(root, 0.12, Vector3(0, 0.1, 0), OAK.darkened(0.1))
+			sph(root, 0.12, Vector3(0, 0.1, 0), OAK.darkened(0.1), "foliage")
 		"ship":
 			var s := ship()
 			s.scale = Vector3(0.8, 0.8, 0.8)
@@ -839,13 +837,13 @@ static func battle_prop(kind: String, damaged: bool) -> Node3D:
 	var root := Node3D.new()
 	match kind:
 		"hill":
-			sph(root, 0.55, Vector3(0, 0.05, 0), Color(0.48, 0.4, 0.24))
+			sph(root, 0.55, Vector3(0, 0.05, 0), Color(0.48, 0.4, 0.24), "dirt")
 			root.scale = Vector3(1.15, 0.45, 0.9)
-			sph(root, 0.28, Vector3(-0.1, 0.22, 0.05), Color(0.58, 0.5, 0.3))
+			sph(root, 0.28, Vector3(-0.1, 0.22, 0.05), Color(0.58, 0.5, 0.3), "grass")
 		"rock":
-			box(root, Vector3(0.7, 0.4, 0.55), Vector3(0, 0.22, 0), Color(0.48, 0.48, 0.5), Vector3(0.05, 0.2, 0.1))
-			box(root, Vector3(0.4, 0.35, 0.35), Vector3(0.2, 0.4, 0.05), Color(0.35, 0.35, 0.38))
-			box(root, Vector3(0.3, 0.22, 0.28), Vector3(-0.25, 0.18, -0.05), Color(0.58, 0.58, 0.6))
+			box(root, Vector3(0.7, 0.4, 0.55), Vector3(0, 0.22, 0), Color(0.48, 0.48, 0.5), Vector3(0.05, 0.2, 0.1), "rock")
+			box(root, Vector3(0.4, 0.35, 0.35), Vector3(0.2, 0.4, 0.05), Color(0.35, 0.35, 0.38), Vector3.ZERO, "rock")
+			box(root, Vector3(0.3, 0.22, 0.28), Vector3(-0.25, 0.18, -0.05), Color(0.58, 0.58, 0.6), Vector3.ZERO, "rock")
 		"tree":
 			var t := scenery("pine")
 			t.scale = Vector3(1.4, 1.4, 1.4)
