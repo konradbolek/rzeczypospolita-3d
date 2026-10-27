@@ -1,7 +1,8 @@
 extends Control
 ## Pełnoekranowa nakładka walki.
-## Pole jest Node3D w głównym widoku. SubViewport z own_world_3d, kamerą i światłem
-## zawieszał grę przy wejściu w bitwę (renderer 4.7, drugi świat 3D + cienie).
+## Pole jest Node3D w głównym widoku i używa kamery oraz światła mapy.
+## Własna kamera, WorldEnvironment albo światło z cieniami zawiesza Forward+
+## na Metal/Vulkan w klatce po pierwszym narysowaniu armii.
 
 signal closed(player_won: bool, survivors: Array, enemy_survivors: Array)
 

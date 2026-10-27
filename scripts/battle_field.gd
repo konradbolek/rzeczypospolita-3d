@@ -58,6 +58,9 @@ var _mat_hover: StandardMaterial3D
 var _mat_dim: StandardMaterial3D
 var _mat_flash: StandardMaterial3D
 var _mounted := false
+## Pusta bitwa nie może co klatkę brudzić materiałów — na Metalu drugi frame się zawiesza.
+var _visual_dirty := false
+var _ai_steps := 0
 
 
 func start_battle(player_units: Array = [], is_siege: bool = false, enemy_units: Array = []) -> void:
@@ -286,6 +289,8 @@ func _towers_fire() -> void:
 			_hit_fx(best, TOWER_DMG)
 			status.emit("Wieża strzela w %s (−%d)" % [str(_units[best]["name"]), TOWER_DMG])
 			await get_tree().create_timer(0.35).timeout
+			if not _mounted:
+				return
 
 
 ## ---------- Animacje ataku ----------
@@ -383,7 +388,9 @@ func _recompute_reach(idx: int) -> void:
 	var start: Vector2i = u["pos"]
 	_reachable[start] = 0
 	var frontier: Array[Vector2i] = [start]
-	while not frontier.is_empty():
+	var guard := 0
+	while not frontier.is_empty() and guard < 512:
+		guard += 1
 		var cur: Vector2i = frontier.pop_front()
 		var cost: int = int(_reachable[cur])
 		if cost >= speed:
@@ -429,6 +436,8 @@ func _animate_unit(idx: int, goal: Vector2i) -> void:
 		_anim_px[idx] = _pp(pts, v)
 		queue_redraw(), 0.0, 1.0, STEP_TIME * float(pts.size() - 1))
 	await tw.finished
+	if not _mounted:
+		return
 	_anim_px.erase(idx)
 	_units[idx]["pos"] = goal
 	animating = false
@@ -494,19 +503,35 @@ func _finish_player_unit(idx: int) -> void:
 
 func _start_enemy_turn() -> void:
 	_player_turn = false
+	_ai_steps = 0
 	_reset_acted(false)
 	status.emit("Tura wroga…")
 	if not _structs.is_empty():
 		_busy = true
 		await _towers_fire()
 		_busy = false
-		if _check_end():
+		if not _mounted or _check_end():
 			return
 	_enemy_ai_step()
 
 
+func _end_enemy_turn() -> void:
+	_player_turn = true
+	_cast_this_turn = false
+	_reset_acted(true)
+	_selected = -1
+	status.emit("Twoja tura — wybierz jednostkę")
+	queue_redraw()
+
+
 func _enemy_ai_step() -> void:
+	if not _mounted or not is_visible_in_tree():
+		return
 	if _check_end():
+		return
+	_ai_steps += 1
+	if _ai_steps > 24:
+		_end_enemy_turn()
 		return
 	var idx := -1
 	for i in _units.size():
@@ -515,12 +540,7 @@ func _enemy_ai_step() -> void:
 			idx = i
 			break
 	if idx < 0:
-		_player_turn = true
-		_cast_this_turn = false
-		_reset_acted(true)
-		_selected = -1
-		status.emit("Twoja tura — wybierz jednostkę")
-		queue_redraw()
+		_end_enemy_turn()
 		return
 	var enemy: Dictionary = _units[idx]
 	# Znajdź najbliższego gracza
@@ -535,7 +555,8 @@ func _enemy_ai_step() -> void:
 				target_i = i
 	if target_i < 0:
 		_units[idx]["acted"] = true
-		_enemy_ai_step()
+		# deferred, nie rekurencja — synchroniczna pętla po oddziałach zatyka klatkę
+		call_deferred("_enemy_ai_step")
 		return
 	var target: Dictionary = _units[target_i]
 	if best_d <= int(enemy.get("range", 1)):
@@ -545,6 +566,8 @@ func _enemy_ai_step() -> void:
 		if _check_end():
 			return
 		await get_tree().create_timer(0.25).timeout
+		if not _mounted:
+			return
 		_enemy_ai_step()
 		return
 	# Ruch w stronę celu
@@ -561,6 +584,8 @@ func _enemy_ai_step() -> void:
 			best_cell = c
 	if best_cell != enemy["pos"]:
 		await _animate_unit(idx, best_cell)
+	if not _mounted:
+		return
 	if HexMath.distance(best_cell, target["pos"]) <= int(enemy.get("range", 1)):
 		_resolve_attack(idx, target_i)
 	_units[idx]["acted"] = true
@@ -568,6 +593,8 @@ func _enemy_ai_step() -> void:
 	if _check_end():
 		return
 	await get_tree().create_timer(0.15).timeout
+	if not _mounted:
+		return
 	_enemy_ai_step()
 
 
@@ -587,18 +614,27 @@ func _resolve_attack(attacker_i: int, defender_i: int) -> void:
 
 
 func queue_redraw() -> void:
-	pass
+	_visual_dirty = true
 
 
 func _process(_dt: float) -> void:
-	if _mounted and is_visible_in_tree():
-		_sync_visuals()
+	if not _mounted or not is_visible_in_tree():
+		return
+	var live_fx := animating or not _fx_proj.is_empty() or not _fx_lunge.is_empty() or not _fx_flash.is_empty()
+	if not _visual_dirty and not live_fx:
+		return
+	_sync_visuals()
+	if not live_fx:
+		_visual_dirty = false
 
 
 func deactivate() -> void:
-	if _cam:
-		_cam.current = false
+	_mounted = false
+	_visual_dirty = false
 	visible = false
+	# Kamera należy do mapy — nie wyłączać jej stąd i nie zwalniać.
+	_cam = null
+	_drop_view()
 
 
 func _cell_pos(cell: Vector2i) -> Vector3:
@@ -614,41 +650,50 @@ func _trans(c: Color) -> StandardMaterial3D:
 	return m
 
 
-func _mount_3d() -> void:
-	visible = true
-	if _cam == null:
-		# Środowisko tylko na kamerze bitwy — osobny WorldEnvironment w głównym
-		# widoku nadpisywałby niebo mapy. Bez cieni: drugi shadow pass w SubViewport
-		# potrafił zakleszczyć renderer; bitwa i tak jest w głównym widoku.
-		var e := Environment.new()
-		e.background_mode = Environment.BG_COLOR
-		e.background_color = Color(0.55, 0.72, 0.88)
-		e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-		e.ambient_light_color = Color(0.7, 0.72, 0.75)
-		e.ambient_light_energy = 0.55
-		var sun := DirectionalLight3D.new()
-		sun.rotation_degrees = Vector3(-48, -30, 0)
-		sun.light_energy = 1.15
-		sun.shadow_enabled = false
-		add_child(sun)
-		_cam = Camera3D.new()
-		_cam.fov = 42.0
-		_cam.environment = e
-		add_child(_cam)
-		_mat_move = _trans(Color(0.3, 0.55, 1.0, 0.4))
-		_mat_atk = _trans(Color(1.0, 0.25, 0.15, 0.48))
-		_mat_hover = _trans(Color(1, 1, 1, 0.22))
-		_mat_dim = _trans(Color(0, 0, 0, 0.45))
-		_mat_flash = _trans(Color(1, 0.2, 0.1, 0.6))
-	_cam.make_current()
-	if _view and is_instance_valid(_view):
-		_view.queue_free()
+func _world() -> Node:
+	var p := get_parent()
+	return p.get_node_or_null("World3D") if p else null
+
+
+func _drop_view() -> void:
 	_tile_nodes.clear()
 	_unit_nodes.clear()
 	_prop_nodes.clear()
 	_prop_keys.clear()
 	_proj_pool.clear()
 	_txt_pool.clear()
+	_fx_proj.clear()
+	_fx_lunge.clear()
+	_fx_flash.clear()
+	_fx_text.clear()
+	if _view and is_instance_valid(_view):
+		var old := _view
+		_view = null
+		old.free()
+
+
+func _ensure_mats() -> void:
+	if _mat_move != null:
+		return
+	_mat_move = _trans(Color(0.3, 0.55, 1.0, 0.4))
+	_mat_atk = _trans(Color(1.0, 0.25, 0.15, 0.48))
+	_mat_hover = _trans(Color(1, 1, 1, 0.22))
+	_mat_dim = _trans(Color(0, 0, 0, 0.45))
+	_mat_flash = _trans(Color(1, 0.2, 0.1, 0.6))
+
+
+## Jedno światło mapy ma wyłączone cienie. Te siatki i tak nie wchodzą w shadow pass.
+func _no_shadows(n: Node) -> void:
+	if n is GeometryInstance3D:
+		(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	for ch in n.get_children():
+		_no_shadows(ch)
+
+
+func _mount_3d() -> void:
+	visible = true
+	_ensure_mats()
+	_drop_view()
 	_view = Node3D.new()
 	_view.name = "View"
 	add_child(_view)
@@ -673,13 +718,13 @@ func _mount_3d() -> void:
 			tile.position = Vector3(center.x, 0, center.y)
 			tile.set_meta("cell", cell)
 			var hsh := absi(hash(cell)) % 100
-			var surf := "grass"
+			var surf := Surf.pick("grass", hsh)
 			if hsh % 7 == 0:
-				surf = "dirt"
+				surf = Surf.pick("dirt", hsh)
 			if _is_siege and q >= 8:
-				surf = "sand"
+				surf = Surf.pick("sand", hsh)
 			elif _is_siege and q == 7:
-				surf = "stone"
+				surf = Surf.pick("stone", hsh)
 			Fig.disk(tile, hex_size * 0.98, 0.14, Vector3(0, 0.07, 0), surf)
 			var hi := MeshInstance3D.new()
 			hi.name = "Hi"
@@ -710,10 +755,24 @@ func _mount_3d() -> void:
 	_view.add_child(_fx_root)
 	_build_unit_nodes()
 	var target := Vector3(mid.x, 0.3, mid.y)
-	_cam.position = target + Vector3(0.2, hex_size * 8.2, hex_size * 7.4)
-	_cam.look_at(target, Vector3.UP)
+	var eye := target + Vector3(0.2, hex_size * 8.2, hex_size * 7.4)
+	var world := _world()
+	if world and world.has_method("aim_for_battle"):
+		# Ta sama kamera co mapa. Własna Camera3D + Environment robiły drugi pass.
+		_cam = world.aim_for_battle(eye, target)
+	elif _cam == null:
+		_cam = Camera3D.new()
+		_cam.fov = 42.0
+		_cam.far = 120.0
+		add_child(_cam)
+		_cam.position = eye
+		_cam.look_at(target, Vector3.UP)
+		_cam.current = true
 	_mounted = true
+	_visual_dirty = true
 	_sync_visuals()
+	_no_shadows(_view)
+	_visual_dirty = false
 
 
 func _build_unit_nodes() -> void:
@@ -741,18 +800,6 @@ func _build_unit_nodes() -> void:
 		sel.visible = false
 		n.add_child(sel)
 		_add_hp_bar(n, 1.08)
-		var tag := Label3D.new()
-		tag.name = "Tag"
-		tag.text = str(u["name"])
-		tag.font_size = 32
-		tag.pixel_size = 0.0045
-		tag.position = Vector3(0, 1.28, 0)
-		tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		tag.outline_size = 8
-		tag.modulate = Color(1, 0.96, 0.88)
-		tag.no_depth_test = true
-		tag.visible = false
-		n.add_child(tag)
 		_view.add_child(n)
 		_unit_nodes.append(n)
 
@@ -786,6 +833,9 @@ func _set_hp(n: Node3D, frac: float) -> void:
 	if fg == null:
 		return
 	frac = clampf(frac, 0.0, 1.0)
+	if is_equal_approx(float(n.get_meta("hp_frac", -1.0)), frac):
+		return
+	n.set_meta("hp_frac", frac)
 	fg.scale = Vector3(maxf(0.04, frac), 1, 1)
 	fg.position.x = (frac - 1.0) * 0.31
 	var mat: StandardMaterial3D = fg.get_meta("bar_mat")
@@ -849,6 +899,7 @@ func _sync_props() -> void:
 			if _structs.has(c):
 				var top := 1.15 if kind == "tower" else 1.0
 				_add_hp_bar(n, top)
+			_no_shadows(n)
 			_props.add_child(n)
 			_prop_nodes[c] = n
 			_prop_keys[c] = key
@@ -891,14 +942,17 @@ func _sync_units() -> void:
 		elif acted:
 			ov = _mat_dim
 		_apply_overlay(n, ov)
-		var tag := n.get_node_or_null("Tag")
-		if tag:
-			tag.visible = i == _selected or _unit_at(_hover) == i
 
 
 func _apply_overlay(n: Node, mat: Material) -> void:
 	if n is GeometryInstance3D and str(n.name) not in ["HpBg", "HpFg", "Sel", "Tag"]:
-		(n as GeometryInstance3D).material_overlay = mat
+		var gi := n as GeometryInstance3D
+		var mid := 0
+		if mat != null:
+			mid = mat.get_instance_id()
+		if int(gi.get_meta("ov_id", -1)) != mid:
+			gi.set_meta("ov_id", mid)
+			gi.material_overlay = mat
 	for ch in n.get_children():
 		_apply_overlay(ch, mat)
 
@@ -927,26 +981,8 @@ func _sync_fx() -> void:
 		var p := a.lerp(b, t)
 		var arc := sin(t * PI) * a.distance_to(b) * 0.25
 		mi.position = Vector3(p.x, GROUND_Y + 0.55 + arc, p.y)
-	while _txt_pool.size() < _fx_text.size():
-		var lb := Label3D.new()
-		lb.font_size = 42
-		lb.pixel_size = 0.005
-		lb.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		lb.outline_size = 8
-		lb.modulate = Color(1, 0.35, 0.2)
-		lb.no_depth_test = true
-		_fx_root.add_child(lb)
-		_txt_pool.append(lb)
-	for i in _txt_pool.size():
-		var lb: Label3D = _txt_pool[i]
-		lb.visible = i < _fx_text.size()
-		if not lb.visible:
-			continue
-		var tx: Array = _fx_text[i]
-		var p2: Vector2 = tx[0]
-		lb.text = str(tx[1])
-		lb.position = Vector3(p2.x, GROUND_Y + 1.15 + 0.35 * float(tx[2]), p2.y)
-		lb.modulate.a = 1.0 - float(tx[2]) * 0.55
+	# Liczby obrażeń są w belce 2D. Label3D (no_depth_test + outline) na Metal/Vulkan
+	# potrafił zakleszczyć Forward+ w klatce po pokazaniu armii.
 
 
 func _pick_cell(local: Vector2) -> Vector2i:
@@ -1019,6 +1055,7 @@ func handle_pointer(event: InputEvent, local: Vector2) -> void:
 		var axial := _pick_cell(local)
 		if axial != _hover:
 			_hover = axial
+			_visual_dirty = true
 	elif _pending_spell != "" and ((event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT) or (event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE)):
 		_pending_spell = ""
 		status.emit("Czar anulowany")

@@ -268,6 +268,8 @@ func _ready() -> void:
 		enter_city_button.text = "Wejdź do miasta (E)"
 	_build_menu()
 	_migrate_old_save()
+	if "--battle" in OS.get_cmdline_user_args() or "--battle-siege" in OS.get_cmdline_user_args():
+		_skip_menu = true
 	if _pending_load_slot > 0:
 		var slot := _pending_load_slot
 		_pending_load_slot = 0
@@ -297,6 +299,8 @@ func _ready() -> void:
 			_pending_tutorial = false
 			_tut_start()
 		_audio_track("map")
+		if "--battle" in OS.get_cmdline_user_args() or "--battle-siege" in OS.get_cmdline_user_args():
+			_debug_battle.call_deferred()
 	else:
 		_show_main_menu()
 		_audio_track("menu")
@@ -802,6 +806,9 @@ func _set_map_3d(on: bool) -> void:
 	var v3 := get_node_or_null("World3D")
 	if v3 and v3.has_method("set_map_shown"):
 		v3.set_map_shown(on)
+	# Pan mapy w trakcie bitwy ruszałby Camera2D, a po wznowieniu odświeżał całą mapę.
+	camera.set_process(on)
+	camera.set_process_unhandled_input(on)
 
 
 func _on_battle_closed(player_won: bool, survivors: Array = [], enemy_survivors: Array = []) -> void:
@@ -3804,6 +3811,30 @@ func _nav_city_hotkey() -> void:
 
 
 static var _shot_stage := 0
+
+
+func _debug_battle() -> void:
+	await get_tree().create_timer(1.2).timeout
+	var siege := "--battle-siege" in OS.get_cmdline_user_args()
+	if siege:
+		_siege_region_id = "debug"
+	print("BATTLE_ENTER")
+	_open_battle("Oblężenie test" if siege else "Walka testowa")
+	if siege:
+		_siege_region_id = ""
+	print("BATTLE_MOUNTED")
+	for i in 180:
+		await get_tree().process_frame
+		if i % 60 == 0:
+			print("BATTLE_FRAME ", i)
+	var shot := get_viewport().get_texture().get_image()
+	var shot_path := "/tmp/battle_siege.png" if siege else "/tmp/battle_field.png"
+	shot.save_png(shot_path)
+	print("BATTLE_SHOT ", shot_path)
+	print("BATTLE_OK")
+	get_tree().quit()
+
+
 func _shot() -> void:
 	_shot_stage += 1
 	if _shot_stage == 1:
