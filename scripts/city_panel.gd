@@ -4,6 +4,7 @@ extends Control
 signal left_city
 signal recruit_requested(unit_id: String)
 signal build_requested(building_id: String)
+signal building_focus(bid: String)
 
 @onready var panel: PanelContainer = $Center/Panel
 @onready var vbox: VBoxContainer = $Center/Panel/Margin/VBox
@@ -35,6 +36,11 @@ var _detail_cost: Label = null
 var _detail_btn: Button = null
 var _owner_banner: Label = null
 var _recruit_title: Label = null
+var _pick_row: HBoxContainer = null
+const PICK_NAMES := {
+	"ratusz": "Ratusz", "koszary": "Koszary", "kuznia": "Kuźnia", "wieza": "Wieża",
+	"targ": "Targ", "stajnia": "Stajnia", "mur": "Mury",
+}
 
 
 ## Widok miasta: niebo, mury, budynki jako ikony rysowane w _draw.
@@ -452,12 +458,24 @@ func _add_unit_icon(b: Button) -> void:
 
 
 func _fit_to_viewport() -> void:
-	# Panel zawsze w granicach okna (12px marginesu), widok miasta się skaluje
+	# Sceneria jest w 3D pod spodem. Panel rekrutacji stoi z prawej i nie zasłania miasta.
 	var vp := get_viewport().get_visible_rect().size
-	panel.custom_minimum_size = Vector2(maxf(vp.x - 24.0, 400.0), maxf(vp.y - 24.0, 300.0))
+	set("color", Color(0, 0, 0, 0))
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var center := $Center as Control
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.anchor_left = 1.0
+	center.anchor_right = 1.0
+	center.anchor_top = 0.0
+	center.anchor_bottom = 1.0
+	center.offset_left = -minf(440.0, vp.x * 0.46)
+	center.offset_right = -8.0
+	center.offset_top = 8.0
+	center.offset_bottom = -8.0
+	var side_w := minf(420.0, maxf(vp.x * 0.42, 300.0))
+	panel.custom_minimum_size = Vector2(side_w, maxf(vp.y - 24.0, 280.0))
 	panel.size = panel.custom_minimum_size
-	if _town_view:
-		_town_view.queue_redraw()
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 
 
 func _build_ui() -> void:
@@ -482,9 +500,12 @@ func _build_ui() -> void:
 	vbox.add_child(_owner_banner)
 	vbox.move_child(_owner_banner, flavor_label.get_index())
 	flavor_label.visible = false
-	# Widok miasta
+	# Stary rysunek 2D zostaje w drzewie (sygnały), ale sceneria jest w CityView.
 	_town_view = TownView.new()
 	_town_view.building_clicked.connect(_on_building_clicked)
+	_town_view.visible = false
+	_town_view.custom_minimum_size = Vector2.ZERO
+	_town_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vbox.add_child(_town_view)
 	vbox.move_child(_town_view, buildings_list.get_index())
 	# Szczegóły wybranego budynku
@@ -513,6 +534,7 @@ func _build_ui() -> void:
 	_detail_box.add_child(h)
 	vbox.add_child(_detail_box)
 	vbox.move_child(_detail_box, _town_view.get_index() + 1)
+	_ensure_pick_row()
 	# Rekrutacja
 	_recruit_title = Label.new()
 	_recruit_title.text = "— Rekrutacja (Koszary) —"
@@ -566,6 +588,9 @@ func open_city(
 		_owner_banner.text = "Zamek obcy — tylko podgląd (zdobądź go, by budować)"
 		_owner_banner.add_theme_color_override("font_color", Color(1.0, 0.45, 0.40))
 	visible = true
+	if _town_view:
+		_town_view.visible = false
+	_ensure_pick_row()
 	refresh_economy(gold, income, army_summary, buildings)
 
 
@@ -589,6 +614,7 @@ func _rebuild_buildings(gold: int, buildings: Dictionary) -> void:
 	_town_view.selected = _selected
 	_town_view.queue_redraw()
 	_update_detail()
+	_refresh_pick_row()
 	var k: int = int(buildings.get("koszary", 0))
 	recruit_row.visible = _owned
 	recruit_row.get_parent().visible = _owned
@@ -643,11 +669,55 @@ func _update_detail() -> void:
 	_detail_btn.disabled = missing
 
 
+func focus_building(bid: String) -> void:
+	_on_building_clicked(bid)
+
+
+func debug_selected() -> String:
+	return _selected
+
+
+func _ensure_pick_row() -> void:
+	if _pick_row != null:
+		return
+	_pick_row = HBoxContainer.new()
+	_pick_row.name = "PickRow"
+	_pick_row.add_theme_constant_override("separation", 3)
+	_pick_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	for bid in ["ratusz", "koszary", "kuznia", "wieza", "targ", "stajnia", "mur"]:
+		var b := Button.new()
+		b.name = "Pick_" + bid
+		b.text = str(PICK_NAMES[bid])
+		b.clip_text = true
+		b.custom_minimum_size = Vector2(0, 26)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var id: String = str(bid)
+		b.pressed.connect(func(): _on_building_clicked(id))
+		_style_button(b)
+		_pick_row.add_child(b)
+	vbox.add_child(_pick_row)
+	if _detail_box:
+		vbox.move_child(_pick_row, _detail_box.get_index())
+
+
+func _refresh_pick_row() -> void:
+	if _pick_row == null:
+		return
+	for b in _pick_row.get_children():
+		var id := str(b.name).trim_prefix("Pick_")
+		var lvl := int(_buildings.get(id, 0))
+		b.text = "%s %d" % [str(PICK_NAMES.get(id, id)), lvl]
+		b.modulate = Color(1, 0.92, 0.65) if id == _selected else Color.WHITE
+
+
 func _on_building_clicked(bid: String) -> void:
 	_selected = bid
-	_town_view.selected = bid
-	_town_view.queue_redraw()
+	if _town_view:
+		_town_view.selected = bid
+		_town_view.queue_redraw()
 	_update_detail()
+	_refresh_pick_row()
+	building_focus.emit(bid)
 
 
 func close_city() -> void:

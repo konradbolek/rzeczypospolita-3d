@@ -85,6 +85,8 @@ static func _place(parent: Node3D, mesh: Mesh, pos: Vector3, col: Color, basis: 
 	mi.position = pos
 	mi.basis = basis
 	mi.scale = scl
+	if Surf.battle_safe:
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
 	return mi
 
@@ -615,6 +617,8 @@ static func _mi(parent: Node3D, mesh: Mesh, pos: Vector3, rot := Vector3.ZERO, s
 	mi.position = pos
 	mi.rotation = rot
 	mi.scale = scl
+	if Surf.battle_safe:
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi)
 	return mi
 
