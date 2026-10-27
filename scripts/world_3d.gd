@@ -28,8 +28,11 @@ var _hover_ring: MeshInstance3D
 var _sel_ring: MeshInstance3D
 var _dyn: Node3D
 var _hero: Node3D
+var _scenery: Node3D
+var _scenery_nodes: Array = []
 var _sig_tiles := ""
 var _sig_obj := ""
+var _built_seed := -999999
 var _dragging := false
 
 
@@ -161,6 +164,7 @@ func _build_tiles() -> void:
 		_peak_mm.set_instance_transform(i, Transform3D(Basis(), peaks[i] + Vector3(0, 0.55, 0)))
 	_tree_pos = trees
 	_peak_pos = peaks
+	_build_scenery()
 	var sm := SphereMesh.new()
 	sm.radius = 0.12
 	sm.height = 0.24
@@ -210,6 +214,9 @@ func _update_colors() -> void:
 		_tree_mm.set_instance_color(i, Color(0.13, 0.35, 0.15) if wm._explored.has(_px_cell(_tree_pos[i])) else Color(0.05, 0.05, 0.06))
 	for i in _peak_pos.size():
 		_peak_mm.set_instance_color(i, Color(0.6, 0.58, 0.56) if wm._explored.has(_px_cell(_peak_pos[i])) else Color(0.05, 0.05, 0.06))
+	for n in _scenery_nodes:
+		if is_instance_valid(n):
+			n.visible = wm._explored.has(n.get_meta("cell"))
 
 
 func _billboard(tex: Texture2D, width: float, pos: Vector3) -> Sprite3D:
@@ -373,32 +380,23 @@ func _build_objects() -> void:
 		if not wm._explored.has(pos):
 			continue
 		var r: Dictionary = wm._resources[pos]
-		var t: Texture2D = wm._mine_png(str(r.get("type", "")))
-		if t:
-			_billboard(t, 1.3, _cpos(pos))
-		else:
-			var mi := MeshInstance3D.new()
-			var b := BoxMesh.new()
-			b.size = Vector3(0.35, 0.35, 0.35)
-			b.material = _mat(Color(0.9, 0.75, 0.2) if str(r.get("type", "")) == "zloto" else Color(0.55, 0.4, 0.25))
-			mi.mesh = b
-			mi.position = _cpos(pos) + Vector3(0, 0.2, 0)
-			_dyn.add_child(mi)
+		var node := MeshFigures.resource(str(r.get("type", "")), bool(r.get("owned", false)))
+		node.position = _cpos(pos)
+		_dyn.add_child(node)
 	for pos in wm._artifacts.keys():
 		if not wm._explored.has(pos):
 			continue
-		var t: Texture2D = wm.artifact_texture(str(wm._artifacts[pos]))
-		if t:
-			var s := _billboard(t, 0.8, _cpos(pos) + Vector3(0, 0.15, 0))
-			s.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		var art := MeshFigures.artifact(str(wm._artifacts[pos]))
+		art.position = _cpos(pos)
+		_dyn.add_child(art)
 	for pos in wm._ports.keys():
 		if not wm._explored.has(pos):
 			continue
-		var t: Texture2D = wm._deco("ship")
-		if t:
-			_billboard(t, 1.0, _cpos(pos))
-		else:
-			_label("⚓", _cpos(pos) + Vector3(0, 0.5, 0))
+		var port_pos := _cpos(pos)
+		var port := MeshFigures.port()
+		port.position = port_pos
+		_dyn.add_child(port)
+		_label(str(wm._ports[pos].get("name", "")), port_pos + Vector3(0, 1.15, 0), Color(0.75, 0.88, 1.0))
 	for pos in wm._armies.keys():
 		if not wm._explored.has(pos):
 			continue
@@ -420,10 +418,71 @@ func _build_objects() -> void:
 	_hero = _figure(Color(0.85, 0.1, 0.12), _token_pos(wm.hero_pos), htex, "husaria", true)
 
 
+func _scenery_kind(terrain: String, h2: int) -> String:
+	match terrain:
+		"wzgórze":
+			if h2 % 11 == 3:
+				return "ruins"
+			if h2 % 3 == 0:
+				return "oak"
+			if h2 % 3 == 1:
+				return "rock"
+		"równina":
+			if h2 % 9 == 2:
+				return "village"
+			if h2 % 9 == 5:
+				return "windmill"
+			if h2 % 9 == 7:
+				return "wheat"
+			if h2 % 4 == 0:
+				return "oak"
+		"step":
+			if h2 % 13 == 4:
+				return "windmill"
+			if h2 % 6 == 3:
+				return "rock"
+			if h2 % 6 == 0:
+				return "bush"
+		"bagno":
+			if h2 % 2 == 0:
+				return "bush"
+		"wybrzeze":
+			if h2 % 5 == 0:
+				return "bush"
+		"morze":
+			if h2 % 19 == 4:
+				return "ship"
+	return ""
+
+
+func _build_scenery() -> void:
+	if _scenery and is_instance_valid(_scenery):
+		_scenery.free()
+	_scenery_nodes.clear()
+	_scenery = Node3D.new()
+	_scenery.name = "Scenery"
+	add_child(_scenery)
+	for c in _cells:
+		var cell: Vector2i = c
+		if wm._castles.has(cell) or wm._resources.has(cell) or wm._ports.has(cell) or wm._artifacts.has(cell):
+			continue
+		var h2: int = wm._cell_hash(Vector2i(cell.y * 7 + 3, cell.x * 11 + 5))
+		var kind := _scenery_kind(_terrain(cell), h2)
+		if kind == "":
+			continue
+		var n := MeshFigures.scenery(kind)
+		n.position = _cpos(cell) + Vector3(0.12, 0, 0.18)
+		n.set_meta("cell", cell)
+		n.visible = false
+		_scenery.add_child(n)
+		_scenery_nodes.append(n)
+
+
 func _process(_d: float) -> void:
 	if wm == null:
 		return
-	if _hex_mm == null or _cells.size() != wm._cells.size():
+	if _hex_mm == null or _cells.size() != wm._cells.size() or _built_seed != wm.map_seed:
+		_built_seed = wm.map_seed
 		for ch in get_children():
 			if ch is MultiMeshInstance3D:
 				ch.queue_free()
@@ -433,8 +492,12 @@ func _process(_d: float) -> void:
 	if st != _sig_tiles:
 		_sig_tiles = st
 		_update_colors()
-	var so := "%d|%s|%s|%d|%d|%s|%s|%d" % [wm._explored.size(), str(wm._armies.keys()), str(wm.hero_pos), wm._artifacts.size(),
-		wm._resources.size(), str(wm.owned_region_ids), wm.active_portrait, wm.map_seed]
+	var owned_n := 0
+	for rp in wm._resources.keys():
+		if bool(wm._resources[rp].get("owned", false)):
+			owned_n += 1
+	var so := "%d|%s|%s|%d|%d|%d|%s|%s|%d" % [wm._explored.size(), str(wm._armies.keys()), str(wm.hero_pos), wm._artifacts.size(),
+		wm._resources.size(), owned_n, str(wm.owned_region_ids), wm.active_portrait, wm.map_seed]
 	if so != _sig_obj and not wm.is_animating:
 		_sig_obj = so
 		_build_objects()

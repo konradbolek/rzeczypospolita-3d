@@ -1,5 +1,5 @@
-extends Node2D
-## Prosta walka na hexach (styl Heroes — szkic).
+extends Node3D
+## Walka na hexach w 3D (low-poly). Logika tur zostaje, rysowanie jest sceną Node3D.
 
 signal battle_over(player_won: bool)
 signal status(text: String)
@@ -12,7 +12,9 @@ var _pending_cost: int = 0
 var _cast_this_turn: bool = false
 const SPELL_TARGET_ENEMY := {"blyskawica": true}
 
-@export var hex_size: float = 32.0
+@export var hex_size: float = 1.08
+const GROUND_Y := 0.12
+const Fig := preload("res://scripts/mesh_figures.gd")
 @export var map_w: int = 11
 @export var map_h: int = 8
 
@@ -39,13 +41,22 @@ const STEP_TIME := 0.12
 var _came: Dictionary = {} # Vector2i -> Vector2i (ścieżka BFS)
 var _anim_px: Dictionary = {} # idx -> Vector2 (pozycja rysowania w trakcie animacji)
 var animating: bool = false
-## Assety PNG pola bitwy (fallback: rysowanie proceduralne)
-var _btex: Dictionary = {}
-func _tex(n: String) -> Texture2D:
-	if not _btex.has(n):
-		var p := "res://assets/battle/%s.png" % n
-		_btex[n] = load(p) as Texture2D if ResourceLoader.exists(p) else null
-	return _btex[n]
+var _view: Node3D
+var _cam: Camera3D
+var _props: Node3D
+var _fx_root: Node3D
+var _tile_nodes: Array = []
+var _unit_nodes: Array = []
+var _prop_nodes: Dictionary = {}
+var _prop_keys: Dictionary = {}
+var _proj_pool: Array = []
+var _txt_pool: Array = []
+var _mat_move: StandardMaterial3D
+var _mat_atk: StandardMaterial3D
+var _mat_hover: StandardMaterial3D
+var _mat_dim: StandardMaterial3D
+var _mat_flash: StandardMaterial3D
+var _mounted := false
 
 
 func start_battle(player_units: Array = [], is_siege: bool = false, enemy_units: Array = []) -> void:
@@ -84,7 +95,7 @@ func start_battle(player_units: Array = [], is_siege: bool = false, enemy_units:
 			_units[-1]["range"] = int(e.get("range", 1))
 		_add_siege_structures()
 		status.emit("Twoja tura — wybierz jednostkę")
-		queue_redraw()
+		_mount_3d()
 		return
 	_add_siege_structures()
 	var hp_bonus := 10 if is_siege else 0
@@ -94,7 +105,7 @@ func start_battle(player_units: Array = [], is_siege: bool = false, enemy_units:
 	if is_siege or player_units.size() >= 3:
 		_units.append(_mk("Straż zamkowa" if is_siege else "Jazda wroga", "enemy_j", false, Vector2i(8, 4), 32 + hp_bonus, 11 + dmg_bonus, 5, Color(0.6, 0.1, 0.1)))
 	status.emit("Twoja tura — wybierz jednostkę")
-	queue_redraw()
+	_mount_3d()
 
 
 ## Zwraca "" gdy OK, inaczej powód odmowy.
@@ -574,145 +585,371 @@ func _resolve_attack(attacker_i: int, defender_i: int) -> void:
 		status.emit("%s atakuje %s (−%d HP, zostało %d)" % [who, whom, dmg, int(d["hp"])])
 
 
-func _draw() -> void:
-	# tło: łąka pod polem bitwy
-	var tl := HexMath.axial_to_pixel(0, 0, hex_size)
-	var br_px := HexMath.axial_to_pixel(map_w - 1, map_h - 1, hex_size)
-	var bg := Rect2(Vector2(minf(tl.x, HexMath.axial_to_pixel(0, map_h - 1, hex_size).x), tl.y), Vector2.ZERO).expand(br_px).expand(HexMath.axial_to_pixel(map_w - 1, 0, hex_size)).grow(hex_size * 3.5)
-	var bgt := _tex("battle_bg")
-	if bgt:
-		var ts := bgt.get_size()
-		var sc := maxf(bg.size.x / ts.x, bg.size.y / ts.y)
-		draw_texture_rect(bgt, Rect2(bg.get_center() - ts * sc * 0.5, ts * sc), false)
-	else:
-		draw_rect(bg, Color(0.17, 0.27, 0.14))
-	for k in (0 if bgt else 6):
-		draw_rect(Rect2(bg.position + Vector2(0, bg.size.y * k / 6.0), Vector2(bg.size.x, bg.size.y / 12.0)), Color(0.2, 0.31, 0.16, 0.35))
-	for t in _trees:
-		_draw_tree(t[0], hex_size * float(t[1]))
-	var sel_pos := Vector2i(-1, -1)
-	if _selected >= 0:
-		sel_pos = _units[_selected]["pos"]
+func queue_redraw() -> void:
+	pass
+
+
+func _process(_dt: float) -> void:
+	if _mounted:
+		_sync_visuals()
+
+
+func _cell_pos(cell: Vector2i) -> Vector3:
+	var p := HexMath.axial_to_pixel(cell.x, cell.y, hex_size)
+	return Vector3(p.x, GROUND_Y, p.y)
+
+
+func _trans(c: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = c
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	return m
+
+
+func _mount_3d() -> void:
+	if _cam == null:
+		var envn := WorldEnvironment.new()
+		var e := Environment.new()
+		e.background_mode = Environment.BG_COLOR
+		e.background_color = Color(0.55, 0.72, 0.88)
+		e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+		e.ambient_light_color = Color(0.7, 0.72, 0.75)
+		e.ambient_light_energy = 0.45
+		envn.environment = e
+		add_child(envn)
+		var sun := DirectionalLight3D.new()
+		sun.rotation_degrees = Vector3(-48, -30, 0)
+		sun.light_energy = 1.15
+		sun.shadow_enabled = true
+		add_child(sun)
+		_cam = Camera3D.new()
+		_cam.fov = 42.0
+		_cam.current = true
+		add_child(_cam)
+		var vp := get_viewport()
+		if vp != null and vp.world_3d:
+			vp.world_3d.environment = e
+		_mat_move = _trans(Color(0.3, 0.55, 1.0, 0.4))
+		_mat_atk = _trans(Color(1.0, 0.25, 0.15, 0.48))
+		_mat_hover = _trans(Color(1, 1, 1, 0.22))
+		_mat_dim = _trans(Color(0, 0, 0, 0.45))
+		_mat_flash = _trans(Color(1, 0.2, 0.1, 0.6))
+	if _view and is_instance_valid(_view):
+		_view.free()
+	_tile_nodes.clear()
+	_unit_nodes.clear()
+	_prop_nodes.clear()
+	_prop_keys.clear()
+	_proj_pool.clear()
+	_txt_pool.clear()
+	_view = Node3D.new()
+	_view.name = "View"
+	add_child(_view)
+	var mid := HexMath.axial_to_pixel(int(map_w / 2), int(map_h / 2), hex_size)
+	var ground := MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(hex_size * float(map_w) * 3.2, hex_size * float(map_h) * 3.4)
+	var gm := StandardMaterial3D.new()
+	gm.albedo_color = Color(0.24, 0.38, 0.18)
+	pm.material = gm
+	ground.mesh = pm
+	ground.position = Vector3(mid.x, -0.01, mid.y)
+	_view.add_child(ground)
 	for r in map_h:
 		for q in map_w:
 			var cell := Vector2i(q, r)
+			var tile := Node3D.new()
 			var center := HexMath.axial_to_pixel(q, r, hex_size)
-			var h := absi(hash(cell)) % 100
-			var col := Color(0.30, 0.46, 0.22).lerp(Color(0.40, 0.52, 0.25), h / 100.0)
-			if h % 7 == 0:
-				col = Color(0.45, 0.38, 0.24) # ubita ziemia
-			var corners := HexMath.hex_corners(center, hex_size * 0.97)
-			# cień pod hexem
-			var sh := PackedVector2Array()
-			for p in corners:
-				sh.append(p + Vector2(2, 3))
-			draw_colored_polygon(sh, Color(0, 0, 0, 0.25))
-			if bgt:
-				draw_colored_polygon(corners, Color(col.r, col.g, col.b, 0.18))
-			else:
-				draw_colored_polygon(corners, col)
-			# jaśniejszy środek (wypukłość)
-			draw_colored_polygon(HexMath.hex_corners(center + Vector2(-1, -2), hex_size * 0.6), Color(1, 1, 0.8, 0.05))
-			# kępki trawy
-			for g in 3:
-				var off := Vector2(((h * (g + 3)) % 31) - 15, ((h * (g + 5)) % 23) - 11) * hex_size / 32.0
-				var gp := center + off
-				draw_line(gp, gp + Vector2(-2, -4), Color(0.2, 0.36, 0.14), 1.0)
-				draw_line(gp, gp + Vector2(1, -5), Color(0.24, 0.42, 0.16), 1.0)
-			if _reachable.has(cell) and cell != sel_pos:
-				draw_colored_polygon(corners, Color(0.3, 0.55, 1.0, 0.35))
-			if _selected >= 0:
-				var ti := _unit_at(cell)
-				if ti >= 0 and not bool(_units[ti]["player"]) and HexMath.distance(sel_pos, cell) <= int(_units[_selected].get("range", 1)):
-					draw_colored_polygon(corners, Color(1.0, 0.25, 0.15, 0.45))
-			if cell == _hover:
-				draw_colored_polygon(corners, Color(1, 1, 1, 0.12))
-			draw_polyline(corners + PackedVector2Array([corners[0]]), Color(0.05, 0.1, 0.03, 0.55), 1.0)
-			if _obstacles.has(cell):
-				_draw_obstacle(center, str(_obstacles[cell]), cell)
-	# jednostki
+			tile.position = Vector3(center.x, 0, center.y)
+			tile.set_meta("cell", cell)
+			var hsh := absi(hash(cell)) % 100
+			var col := Color(0.32, 0.48, 0.24).lerp(Color(0.45, 0.56, 0.28), float(hsh) / 100.0)
+			if hsh % 7 == 0:
+				col = Color(0.48, 0.4, 0.26)
+			if _is_siege and q >= 8:
+				col = col.lerp(Color(0.5, 0.44, 0.32), 0.4)
+			Fig.cyl(tile, hex_size * 0.98, 0.14, Vector3(0, 0.07, 0), col, 6)
+			var hi := MeshInstance3D.new()
+			hi.name = "Hi"
+			var hm := CylinderMesh.new()
+			hm.top_radius = hex_size * 0.9
+			hm.bottom_radius = hex_size * 0.9
+			hm.height = 0.04
+			hm.radial_segments = 6
+			hm.material = _mat_hover
+			hi.mesh = hm
+			hi.position.y = 0.16
+			hi.visible = false
+			tile.add_child(hi)
+			_view.add_child(tile)
+			_tile_nodes.append(tile)
+	for t in _trees:
+		var tp: Vector2 = t[0]
+		var sc := float(t[1])
+		var tree := Fig.battle_prop("tree", false)
+		tree.position = Vector3(tp.x, GROUND_Y, tp.y)
+		tree.scale = Vector3(sc, sc, sc)
+		_view.add_child(tree)
+	_props = Node3D.new()
+	_props.name = "Props"
+	_view.add_child(_props)
+	_fx_root = Node3D.new()
+	_fx_root.name = "Fx"
+	_view.add_child(_fx_root)
+	_build_unit_nodes()
+	var target := Vector3(mid.x, 0.3, mid.y)
+	_cam.position = target + Vector3(0.2, hex_size * 8.2, hex_size * 7.4)
+	_cam.look_at(target, Vector3.UP)
+	_mounted = true
+	_sync_visuals()
+
+
+func _build_unit_nodes() -> void:
 	for i in _units.size():
 		var u: Dictionary = _units[i]
-		if int(u["hp"]) <= 0:
-			continue
-		var pos: Vector2i = u["pos"]
-		var c: Vector2 = _anim_px.get(i, HexMath.axial_to_pixel(pos.x, pos.y, hex_size)) + _fx_lunge.get(i, Vector2.ZERO)
-		var col: Color = u["color"]
-		var is_player := bool(u["player"])
-		var acted := bool(u["acted"]) and is_player == _player_turn
-		# podstawa w kolorze frakcji
-		var base := HexMath.hex_corners(c, hex_size * 0.8)
-		draw_colored_polygon(base, Color(col.r, col.g, col.b, 0.28))
-		if i == _selected:
-			draw_polyline(base + PackedVector2Array([base[0]]), Color(1, 0.9, 0.2), 3.0)
-			draw_polyline(HexMath.hex_corners(c, hex_size * 0.92) + PackedVector2Array([HexMath.hex_corners(c, hex_size * 0.92)[0]]), Color(1, 0.95, 0.5, 0.6), 1.5)
-		else:
-			draw_polyline(base + PackedVector2Array([base[0]]), col.darkened(0.2), 1.5)
-		var body := col.darkened(0.45) if acted else col
-		if _fx_flash.has(i):
-			body = body.lerp(Color(1, 0.2, 0.1), clampf(float(_fx_flash[i]), 0.0, 1.0) * 0.8)
-		UnitArt.draw_unit(self, str(u.get("unit_id", "")), c + Vector2(0, -2), hex_size * 0.75, body, not is_player)
-		if acted:
-			draw_circle(c + Vector2(hex_size * 0.5, -hex_size * 0.5), 6.0, Color(0.15, 0.15, 0.15, 0.85))
-			draw_string(ThemeDB.fallback_font, c + Vector2(hex_size * 0.5 - 4, -hex_size * 0.5 + 4), "z", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.8, 0.8, 0.8))
-		# pasek HP
-		var frac := clampf(float(u["hp"]) / maxf(1.0, float(u["max_hp"])), 0.0, 1.0)
-		var bw := hex_size * 1.1
-		var br := Rect2(c + Vector2(-bw * 0.5, hex_size * 0.55), Vector2(bw, 5))
-		draw_rect(br.grow(1), Color(0, 0, 0, 0.85))
-		draw_rect(Rect2(br.position, Vector2(bw * frac, 5)), Color(0.9, 0.2, 0.15).lerp(Color(0.3, 0.85, 0.3), frac))
-		var hp_txt := "%d" % int(u["hp"])
-		var tp := c + Vector2(-bw * 0.5 - 1, hex_size * 0.55 - 2)
-		draw_string_outline(ThemeDB.fallback_font, tp, hp_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, 3, Color.BLACK)
-		draw_string(ThemeDB.fallback_font, tp, hp_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color.WHITE)
-	# HP struktur oblężniczych
-	for cell in _structs.keys():
+		var n := Node3D.new()
+		Fig.cyl(n, 0.36, 0.045, Vector3(0, 0.03, 0), u["color"], 14)
+		var body := Node3D.new()
+		body.name = "Body"
+		body.scale = Vector3(0.82, 0.82, 0.82)
+		if not bool(u["player"]):
+			body.rotation.y = PI
+		n.add_child(body)
+		MeshFigures.add_unit(body, str(u.get("unit_id", "piechota")), 0.0, false)
+		var sel := MeshInstance3D.new()
+		sel.name = "Sel"
+		var sm := CylinderMesh.new()
+		sm.top_radius = 0.46
+		sm.bottom_radius = 0.46
+		sm.height = 0.035
+		sm.radial_segments = 18
+		sm.material = _trans(Color(1, 0.9, 0.25, 0.9))
+		sel.mesh = sm
+		sel.position.y = 0.03
+		sel.visible = false
+		n.add_child(sel)
+		_add_hp_bar(n, 1.08)
+		var tag := Label3D.new()
+		tag.name = "Tag"
+		tag.text = str(u["name"])
+		tag.font_size = 32
+		tag.pixel_size = 0.0045
+		tag.position = Vector3(0, 1.28, 0)
+		tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		tag.outline_size = 8
+		tag.modulate = Color(1, 0.96, 0.88)
+		tag.no_depth_test = true
+		tag.visible = false
+		n.add_child(tag)
+		_view.add_child(n)
+		_unit_nodes.append(n)
+
+
+func _add_hp_bar(n: Node3D, y: float) -> void:
+	var bg := _bar(Color(0.05, 0.05, 0.05), 0.62)
+	bg.name = "HpBg"
+	bg.position = Vector3(0, y, 0)
+	n.add_child(bg)
+	var fg := _bar(Color(0.25, 0.8, 0.28), 0.62)
+	fg.name = "HpFg"
+	fg.position = Vector3(0, y + 0.02, 0)
+	n.add_child(fg)
+
+
+func _bar(col: Color, w: float) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var b := BoxMesh.new()
+	b.size = Vector3(w, 0.055, 0.05)
+	var m := StandardMaterial3D.new()
+	m.albedo_color = col
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	b.material = m
+	mi.mesh = b
+	mi.set_meta("bar_mat", m)
+	return mi
+
+
+func _set_hp(n: Node3D, frac: float) -> void:
+	var fg := n.get_node_or_null("HpFg") as MeshInstance3D
+	if fg == null:
+		return
+	frac = clampf(frac, 0.0, 1.0)
+	fg.scale = Vector3(maxf(0.04, frac), 1, 1)
+	fg.position.x = (frac - 1.0) * 0.31
+	var mat: StandardMaterial3D = fg.get_meta("bar_mat")
+	mat.albedo_color = Color(0.85, 0.2, 0.15).lerp(Color(0.3, 0.82, 0.28), frac)
+
+
+func _prop_key(cell: Vector2i) -> String:
+	var kind := str(_obstacles.get(cell, ""))
+	var dmg := false
+	if _structs.has(cell):
 		var st: Dictionary = _structs[cell]
-		var sc := HexMath.axial_to_pixel(cell.x, cell.y, hex_size)
-		var f := float(st["hp"]) / float(st["max_hp"])
-		var r := Rect2(sc + Vector2(-hex_size * 0.5, hex_size * 0.6), Vector2(hex_size, 4))
-		draw_rect(r.grow(1), Color.BLACK)
-		draw_rect(Rect2(r.position, Vector2(r.size.x * f, 4)), Color(0.85, 0.7, 0.2))
-	# pociski
-	for pr in _fx_proj:
+		dmg = int(st["hp"]) * 2 <= int(st["max_hp"])
+	return kind + ("*" if dmg else "")
+
+
+func _sync_visuals() -> void:
+	_sync_tiles()
+	_sync_props()
+	_sync_units()
+	_sync_fx()
+
+
+func _sync_tiles() -> void:
+	var sel := Vector2i(-99, -99)
+	if _selected >= 0 and _selected < _units.size():
+		sel = _units[_selected]["pos"]
+	for tile in _tile_nodes:
+		var cell: Vector2i = tile.get_meta("cell")
+		var hi: MeshInstance3D = tile.get_node("Hi")
+		hi.visible = false
+		if _selected >= 0 and _selected < _units.size():
+			var ti := _unit_at(cell)
+			if ti >= 0 and not bool(_units[ti]["player"]) and HexMath.distance(sel, cell) <= int(_units[_selected].get("range", 1)):
+				hi.visible = true
+				hi.material_override = _mat_atk
+				continue
+			if _structs.has(cell) and HexMath.distance(sel, cell) <= int(_units[_selected].get("range", 1)):
+				hi.visible = true
+				hi.material_override = _mat_atk
+				continue
+		if _reachable.has(cell) and cell != sel:
+			hi.visible = true
+			hi.material_override = _mat_move
+		elif cell == _hover and cell.x >= 0 and cell.y >= 0 and cell.x < map_w and cell.y < map_h:
+			hi.visible = true
+			hi.material_override = _mat_hover
+
+
+func _sync_props() -> void:
+	var live := {}
+	for cell in _obstacles.keys():
+		var c: Vector2i = cell
+		live[c] = true
+		var key := _prop_key(c)
+		if str(_prop_keys.get(c, "")) != key:
+			if _prop_nodes.has(c) and is_instance_valid(_prop_nodes[c]):
+				_prop_nodes[c].queue_free()
+			var kind := key.trim_suffix("*")
+			var n := Fig.battle_prop(kind, key.ends_with("*"))
+			n.position = _cell_pos(c)
+			if _structs.has(c):
+				var top := 1.15 if kind == "tower" else 1.0
+				_add_hp_bar(n, top)
+			_props.add_child(n)
+			_prop_nodes[c] = n
+			_prop_keys[c] = key
+	var stale: Array = []
+	for c in _prop_nodes.keys():
+		if not live.has(c):
+			stale.append(c)
+	for c in stale:
+		if is_instance_valid(_prop_nodes[c]):
+			_prop_nodes[c].queue_free()
+		_prop_nodes.erase(c)
+		_prop_keys.erase(c)
+	for c in _structs.keys():
+		if _prop_nodes.has(c) and is_instance_valid(_prop_nodes[c]):
+			var st: Dictionary = _structs[c]
+			_set_hp(_prop_nodes[c], float(st["hp"]) / maxf(1.0, float(st["max_hp"])))
+
+
+func _sync_units() -> void:
+	for i in _units.size():
+		if i >= _unit_nodes.size():
+			break
+		var n: Node3D = _unit_nodes[i]
+		var u: Dictionary = _units[i]
+		if int(u["hp"]) <= 0:
+			n.visible = false
+			continue
+		n.visible = true
+		var px: Vector2 = _unit_px(i) + _fx_lunge.get(i, Vector2.ZERO)
+		n.position = Vector3(px.x, GROUND_Y, px.y)
+		_set_hp(n, float(u["hp"]) / maxf(1.0, float(u["max_hp"])))
+		var sel := n.get_node_or_null("Sel")
+		if sel:
+			sel.visible = i == _selected
+		var acted := bool(u["acted"]) and bool(u["player"]) == _player_turn
+		var ov: Material = null
+		if _fx_flash.has(i):
+			_mat_flash.albedo_color = Color(1, 0.2, 0.1, clampf(float(_fx_flash[i]), 0.0, 1.0) * 0.7)
+			ov = _mat_flash
+		elif acted:
+			ov = _mat_dim
+		_apply_overlay(n, ov)
+		var tag := n.get_node_or_null("Tag")
+		if tag:
+			tag.visible = i == _selected or _unit_at(_hover) == i
+
+
+func _apply_overlay(n: Node, mat: Material) -> void:
+	if n is GeometryInstance3D and str(n.name) not in ["HpBg", "HpFg", "Sel", "Tag"]:
+		(n as GeometryInstance3D).material_overlay = mat
+	for ch in n.get_children():
+		_apply_overlay(ch, mat)
+
+
+func _sync_fx() -> void:
+	while _proj_pool.size() < _fx_proj.size():
+		var mi := MeshInstance3D.new()
+		var s := SphereMesh.new()
+		s.radius = 0.05
+		s.height = 0.1
+		s.radial_segments = 8
+		s.rings = 4
+		s.material = Fig.M(Color(0.25, 0.18, 0.1))
+		mi.mesh = s
+		_fx_root.add_child(mi)
+		_proj_pool.append(mi)
+	for i in _proj_pool.size():
+		var mi: MeshInstance3D = _proj_pool[i]
+		mi.visible = i < _fx_proj.size()
+		if not mi.visible:
+			continue
+		var pr: Array = _fx_proj[i]
 		var a: Vector2 = pr[0]
 		var b: Vector2 = pr[1]
-		var t: float = pr[2]
-		var p := a.lerp(b, t) + Vector2(0, -sin(t * PI) * a.distance_to(b) * 0.18)
-		var p2 := a.lerp(b, maxf(0.0, t - 0.08)) + Vector2(0, -sin(maxf(0.0, t - 0.08) * PI) * a.distance_to(b) * 0.18)
-		if pr[3] == "ball":
-			draw_circle(p, 3.0, Color(0.1, 0.1, 0.1))
-			draw_circle(p2, 5.0, Color(0.9, 0.9, 0.85, 0.35))
-		else:
-			draw_line(p2, p, Color(0.35, 0.22, 0.1), 2.0)
-			draw_circle(p, 1.8, Color(0.8, 0.8, 0.8))
-	for tx in _fx_text:
-		var tp2: Vector2 = tx[0] + Vector2(0, -20.0 * float(tx[2]))
-		draw_string_outline(ThemeDB.fallback_font, tp2, tx[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 16, 4, Color.BLACK)
-		draw_string(ThemeDB.fallback_font, tp2, tx[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 0.3, 0.2, 1.0 - float(tx[2]) * 0.6))
+		var t: float = float(pr[2])
+		var p := a.lerp(b, t)
+		var arc := sin(t * PI) * a.distance_to(b) * 0.25
+		mi.position = Vector3(p.x, GROUND_Y + 0.55 + arc, p.y)
+	while _txt_pool.size() < _fx_text.size():
+		var lb := Label3D.new()
+		lb.font_size = 42
+		lb.pixel_size = 0.005
+		lb.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		lb.outline_size = 8
+		lb.modulate = Color(1, 0.35, 0.2)
+		lb.no_depth_test = true
+		_fx_root.add_child(lb)
+		_txt_pool.append(lb)
+	for i in _txt_pool.size():
+		var lb: Label3D = _txt_pool[i]
+		lb.visible = i < _fx_text.size()
+		if not lb.visible:
+			continue
+		var tx: Array = _fx_text[i]
+		var p2: Vector2 = tx[0]
+		lb.text = str(tx[1])
+		lb.position = Vector3(p2.x, GROUND_Y + 1.15 + 0.35 * float(tx[2]), p2.y)
+		lb.modulate.a = 1.0 - float(tx[2]) * 0.55
 
 
-func _input(event: InputEvent) -> void:
-	var overlay := get_parent().get_parent() as Control
-	if overlay == null or not overlay.visible:
-		return
-	if _busy or animating or not _player_turn:
-		return
-	if event is InputEventMouseMotion:
-		var local: Vector2 = get_global_transform_with_canvas().affine_inverse() * event.position
-		var axial := HexMath.pixel_to_axial(local, hex_size)
-		if axial != _hover:
-			_hover = axial
-			queue_redraw()
-	elif _pending_spell != "" and ((event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT) or (event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE)):
-		_pending_spell = ""
-		status.emit("Czar anulowany")
-		get_viewport().set_input_as_handled()
-	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		var local: Vector2 = get_global_transform_with_canvas().affine_inverse() * event.position
-		var axial := HexMath.pixel_to_axial(local, hex_size)
-		_handle_click(axial)
-		get_viewport().set_input_as_handled()
+func _pick_cell(local: Vector2) -> Vector2i:
+	if _cam == null:
+		return _hover
+	var origin := _cam.project_ray_origin(local)
+	var normal := _cam.project_ray_normal(local)
+	if absf(normal.y) < 0.0001:
+		return _hover
+	var dist := (GROUND_Y - origin.y) / normal.y
+	if dist < 0.0:
+		return _hover
+	var hit := origin + normal * dist
+	return HexMath.pixel_to_axial(Vector2(hit.x, hit.z), hex_size)
 
 
 func _handle_click(axial: Vector2i) -> void:
@@ -730,7 +967,6 @@ func _handle_click(axial: Vector2i) -> void:
 			status.emit("Wybrano: %s — kliknij hex (ruch) lub wroga obok (atak)" % str(_units[hit]["name"]))
 			queue_redraw()
 		return
-	# Atak na bramę/wieżę
 	if hit < 0 and _structs.has(axial):
 		var sd: int = HexMath.distance(_units[_selected]["pos"], axial)
 		if sd <= int(_units[_selected].get("range", 1)):
@@ -739,7 +975,6 @@ func _handle_click(axial: Vector2i) -> void:
 		else:
 			status.emit("Podejdź do murów (zasięg %d)" % int(_units[_selected].get("range", 1)))
 		return
-	# Atak
 	if hit >= 0 and not bool(_units[hit]["player"]):
 		var dist: int = HexMath.distance(_units[_selected]["pos"], axial)
 		if dist <= int(_units[_selected].get("range", 1)):
@@ -748,7 +983,6 @@ func _handle_click(axial: Vector2i) -> void:
 		else:
 			status.emit("Wróg poza zasięgiem (%d) — podejdź bliżej" % int(_units[_selected].get("range", 1)))
 		return
-	# Ruch
 	if _reachable.has(axial) and _cell_free(axial, _selected):
 		var mi := _selected
 		_reachable.clear()
@@ -756,7 +990,6 @@ func _handle_click(axial: Vector2i) -> void:
 		await _animate_unit(mi, axial)
 		_finish_player_unit(mi)
 		return
-	# Reselect własnej
 	if hit >= 0 and bool(_units[hit]["player"]) and not bool(_units[hit]["acted"]):
 		_selected = hit
 		_recompute_reach(hit)
@@ -765,90 +998,21 @@ func _handle_click(axial: Vector2i) -> void:
 	status.emit("Nieprawidłowy cel")
 
 
-func _draw_tree(p: Vector2, sz: float) -> void:
-	var tt := _tex("tree")
-	if tt:
-		var d := sz * 2.0
-		draw_circle(p + Vector2(4, sz * 0.4), sz * 0.5, Color(0, 0, 0, 0.25))
-		draw_texture_rect(tt, Rect2(p - Vector2(d * 0.5, d * 0.75), Vector2(d, d)), false)
+## Klik / hover w układzie pikseli SubViewport (wywołuje nakładka).
+func handle_pointer(event: InputEvent, local: Vector2) -> void:
+	if not _mounted or not is_visible_in_tree():
 		return
-	draw_circle(p + Vector2(4, 4), sz * 0.45, Color(0, 0, 0, 0.25))
-	draw_rect(Rect2(p + Vector2(-2, 0), Vector2(4, sz * 0.4)), Color(0.35, 0.22, 0.1))
-	draw_colored_polygon(PackedVector2Array([p + Vector2(0, -sz * 0.9), p + Vector2(-sz * 0.45, sz * 0.1), p + Vector2(sz * 0.45, sz * 0.1)]), Color(0.1, 0.3, 0.12))
-	draw_colored_polygon(PackedVector2Array([p + Vector2(0, -sz * 1.2), p + Vector2(-sz * 0.35, -sz * 0.3), p + Vector2(sz * 0.35, -sz * 0.3)]), Color(0.14, 0.38, 0.15))
-
-
-func _draw_obstacle(c: Vector2, kind: String, cell: Vector2i = Vector2i(-99, -99)) -> void:
-	var s := hex_size
-	if kind in ["wall", "gate", "tower"]:
-		var nm := kind
-		if _structs.has(cell):
-			var st: Dictionary = _structs[cell]
-			if int(st["hp"]) * 2 <= int(st["max_hp"]):
-				nm += "_damaged"
-		var stx := _tex("siege/" + nm)
-		if stx == null:
-			stx = _tex("siege/" + kind)
-		if stx:
-			draw_colored_polygon(HexMath.hex_corners(c, s * 0.95), Color(0.22, 0.18, 0.12, 0.55))
-			var tsz := stx.get_size()
-			var hgt := {"wall": 1.5, "gate": 2.1, "tower": 2.6}[kind] as float
-			var hh := s * hgt
-			var ww := minf(hh * tsz.x / tsz.y, s * 2.2)
-			hh = ww * tsz.y / tsz.x
-			draw_texture_rect(stx, Rect2(c + Vector2(-ww * 0.5, s * 0.75 - hh), Vector2(ww, hh)), false)
-			return
-	if kind in ["hill", "rock"]:
-		var ot := _tex(kind)
-		if ot:
-			var d := s * 1.9
-			draw_texture_rect(ot, Rect2(c - Vector2(d * 0.5, d * 0.6), Vector2(d, d)), false)
-			return
-	match kind:
-		"hill":
-			var pts := PackedVector2Array()
-			for k in 13:
-				var a := PI + PI * k / 12.0
-				pts.append(c + Vector2(cos(a) * s * 0.85, sin(a) * s * 0.65 + s * 0.3))
-			draw_colored_polygon(pts, Color(0.42, 0.36, 0.2))
-			var top := PackedVector2Array()
-			for k in 13:
-				var a := PI + PI * k / 12.0
-				top.append(c + Vector2(cos(a) * s * 0.55 - 3, sin(a) * s * 0.45 + s * 0.15))
-			draw_colored_polygon(top, Color(0.55, 0.48, 0.28))
-			draw_polyline(pts, Color(0.2, 0.15, 0.08), 2.0)
-			draw_line(c + Vector2(s * 0.15, -s * 0.05), c + Vector2(s * 0.45, s * 0.2), Color(0.25, 0.2, 0.1), 1.5)
-		"rock":
-			draw_colored_polygon(PackedVector2Array([c + Vector2(-s * 0.6, s * 0.35), c + Vector2(-s * 0.4, -s * 0.3), c + Vector2(-s * 0.05, -s * 0.55), c + Vector2(s * 0.35, -s * 0.35), c + Vector2(s * 0.6, s * 0.35)]), Color(0.45, 0.45, 0.47))
-			draw_colored_polygon(PackedVector2Array([c + Vector2(-s * 0.05, -s * 0.55), c + Vector2(s * 0.35, -s * 0.35), c + Vector2(s * 0.6, s * 0.35), c + Vector2(s * 0.1, s * 0.35)]), Color(0.32, 0.32, 0.35))
-			draw_polyline(PackedVector2Array([c + Vector2(-s * 0.6, s * 0.35), c + Vector2(-s * 0.4, -s * 0.3), c + Vector2(-s * 0.05, -s * 0.55), c + Vector2(s * 0.35, -s * 0.35), c + Vector2(s * 0.6, s * 0.35), c + Vector2(-s * 0.6, s * 0.35)]), Color(0.12, 0.12, 0.14), 2.0)
-		"gate":
-			draw_colored_polygon(HexMath.hex_corners(c, s * 0.97), Color(0.25, 0.2, 0.15))
-			var g := Rect2(c + Vector2(-s * 0.5, -s * 0.65), Vector2(s * 1.0, s * 1.05))
-			draw_rect(g, Color(0.55, 0.52, 0.46))
-			var door := Rect2(c + Vector2(-s * 0.3, -s * 0.3), Vector2(s * 0.6, s * 0.7))
-			draw_rect(door, Color(0.4, 0.25, 0.1))
-			for k in 4:
-				draw_line(door.position + Vector2(k * door.size.x / 3.0, 0), door.position + Vector2(k * door.size.x / 3.0, door.size.y), Color(0.2, 0.12, 0.05), 1.5)
-			draw_rect(g, Color(0.15, 0.13, 0.1), false, 2.0)
-		"tower":
-			draw_colored_polygon(HexMath.hex_corners(c, s * 0.97), Color(0.25, 0.2, 0.15))
-			var tw := Rect2(c + Vector2(-s * 0.4, -s * 1.0), Vector2(s * 0.8, s * 1.4))
-			draw_rect(tw, Color(0.62, 0.58, 0.5))
-			draw_colored_polygon(PackedVector2Array([tw.position + Vector2(-4, 0), tw.position + Vector2(tw.size.x + 4, 0), tw.position + Vector2(tw.size.x * 0.5, -s * 0.5)]), Color(0.55, 0.15, 0.1))
-			draw_rect(Rect2(c + Vector2(-3, -s * 0.6), Vector2(6, 10)), Color(0.1, 0.08, 0.06))
-			draw_rect(tw, Color(0.15, 0.13, 0.1), false, 2.0)
-		"wall":
-			var corners := HexMath.hex_corners(c, s * 0.97)
-			draw_colored_polygon(corners, Color(0.25, 0.2, 0.15)) # rów
-			var w := Rect2(c + Vector2(-s * 0.55, -s * 0.6), Vector2(s * 1.1, s * 1.0))
-			draw_rect(w, Color(0.6, 0.57, 0.5))
-			for row in 4:
-				var y := w.position.y + row * w.size.y / 4.0
-				draw_line(Vector2(w.position.x, y), Vector2(w.end.x, y), Color(0.35, 0.33, 0.3), 1.0)
-			for k in 3:
-				draw_rect(Rect2(w.position + Vector2(k * s * 0.4, -s * 0.2), Vector2(s * 0.28, s * 0.2)), Color(0.6, 0.57, 0.5))
-			draw_rect(w, Color(0.15, 0.13, 0.1), false, 2.0)
+	if _busy or animating or not _player_turn:
+		return
+	if event is InputEventMouseMotion:
+		var axial := _pick_cell(local)
+		if axial != _hover:
+			_hover = axial
+	elif _pending_spell != "" and ((event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT) or (event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE)):
+		_pending_spell = ""
+		status.emit("Czar anulowany")
+	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		_handle_click(_pick_cell(local))
 
 
 # --- Dźwięki bitwy ---
