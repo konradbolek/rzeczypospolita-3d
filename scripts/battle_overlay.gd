@@ -33,25 +33,29 @@ func open_battle(title: String = "Walka", player_units: Array = [], is_siege: bo
 	status_label.text = title
 
 
-func _battle_local(screen_pos: Vector2) -> Vector2:
-	return screen_pos
-
-
 func _input(event: InputEvent) -> void:
-	if not visible or field == null or not field.is_processing_input():
+	# Esc musi wejść zanim main._unhandled_input połknie klawisz (menu pauzy).
+	if not visible or field == null or not field.clicks_enabled():
 		return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		field.handle_pointer(event, Vector2.ZERO)
+		get_viewport().set_input_as_handled()
+
+
+## GUI (panel boczny, Magia, wynik) zjada klik wcześniej. Tu zostaje tylko puste pole.
+func _unhandled_input(event: InputEvent) -> void:
+	if not visible or field == null or not field.clicks_enabled():
 		return
-	if event is InputEventMouse:
-		if result_box.visible and result_box.get_global_rect().has_point(event.position):
-			return
-		var box := battle_view.get_global_rect()
-		if not box.has_point(event.position):
-			return
-		field.handle_pointer(event, _battle_local(event.position))
-		if event is InputEventMouseButton and event.pressed:
-			get_viewport().set_input_as_handled()
+	if not event is InputEventMouse:
+		return
+	if result_box.visible and result_box.get_global_rect().has_point(event.position):
+		return
+	var box := battle_view.get_global_rect()
+	if not box.has_point(event.position):
+		return
+	field.handle_pointer(event, event.position)
+	if event is InputEventMouseButton and event.pressed:
+		get_viewport().set_input_as_handled()
 
 
 func _on_status(text: String) -> void:

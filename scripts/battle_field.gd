@@ -67,6 +67,9 @@ var _sun: DirectionalLight3D
 var _spawn_token := 0
 var _trace := false
 var _frames := 0
+## Nakładka pyta o tę flagę. is_processing_input() jest fałszywe, dopóki węzeł
+## nie ma własnego _input — a kliki idą przez handle_pointer, nie przez _input.
+var _clicks := true
 
 
 func _ready() -> void:
@@ -79,6 +82,7 @@ func start_battle(player_units: Array = [], is_siege: bool = false, enemy_units:
 	_selected = -1
 	_player_turn = true
 	_busy = false
+	_clicks = true
 	_pending_spell = ""
 	_cast_this_turn = false
 	_is_siege = is_siege
@@ -145,6 +149,14 @@ func begin_spell(spell_id: String, cost: int) -> String:
 
 func is_player_turn() -> bool:
 	return _player_turn and not _busy and not animating
+
+
+func set_clicks_enabled(on: bool) -> void:
+	_clicks = on
+
+
+func clicks_enabled() -> bool:
+	return _clicks
 
 
 func _apply_spell(hit: int) -> void:
@@ -1134,9 +1146,9 @@ func _handle_click(axial: Vector2i) -> void:
 	status.emit("Nieprawidłowy cel")
 
 
-## Klik / hover w układzie pikseli SubViewport (wywołuje nakładka).
+## Klik / hover w pikselach viewportu (wywołuje nakładka).
 func handle_pointer(event: InputEvent, local: Vector2) -> void:
-	if not _mounted or not is_visible_in_tree():
+	if not _clicks or not _mounted or not is_visible_in_tree():
 		return
 	if _busy or animating or not _player_turn:
 		return
@@ -1182,6 +1194,22 @@ func debug_frames() -> int:
 
 func debug_selected() -> int:
 	return _selected
+
+
+func debug_screen_of(cell: Vector2i) -> Vector2:
+	if _cam == null:
+		return Vector2(-1, -1)
+	return _cam.unproject_position(_cell_pos(cell) + Vector3(0, 0.45, 0))
+
+
+func debug_pick_screen(screen: Vector2) -> Vector2i:
+	return _pick_cell(screen)
+
+
+func debug_unit_cell(i: int) -> Vector2i:
+	if i < 0 or i >= _units.size():
+		return Vector2i(-99, -99)
+	return _units[i]["pos"]
 
 
 func debug_shadow() -> bool:
