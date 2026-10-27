@@ -2142,6 +2142,20 @@ func _spawn_beasts() -> void:
 
 
 var _fog_fx: Node2D = null
+
+
+## Mgła 2D rysuje setki wielokątów co klatkę. W bitwie ma milczeć — inaczej
+## canvas i świat 3D walczą o ten sam viewport.
+func set_battle_paused(paused: bool) -> void:
+	set_process(not paused)
+	set_process_unhandled_input(not paused)
+	if _fog_fx:
+		_fog_fx.set_process(not paused)
+		# Widok 3D i tak chowa dzieci CanvasItem. Nie włączaj mgły z powrotem —
+		# jedna klatka pełnego _draw zasłania mapę po bitwie.
+		_fog_fx.visible = false
+
+
 func _ensure_fog_fx() -> void:
 	if _fog_fx == null:
 		_fog_fx = preload("res://scripts/fog_fx.gd").new()
