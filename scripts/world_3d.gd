@@ -1,10 +1,16 @@
 extends Node3D
-## Prosty widok 3D mapy: czyta stan z WorldMap (2D logika) i renderuje hexy, obiekty i kamerę.
+## Widok 3D mapy: hexy i kamera orbit. Jednostki i zamki to bryły, nie billboardy PNG.
 
 const HEIGHTS := {"morze": 0.05, "rzeka": 0.1, "bagno": 0.18, "równina": 0.25, "step": 0.25,
 	"wybrzeze": 0.22, "las": 0.3, "wzgórze": 0.5, "gory": 0.85}
-const FAC_COL := {"neutral": Color(0.5, 0.45, 0.4), "sweden": Color(0.2, 0.4, 0.9), "moscow": Color(0.7, 0.2, 0.15),
-	"horde": Color(0.8, 0.6, 0.2), "beast": Color(0.35, 0.25, 0.15)}
+const FAC_COL := {
+	"neutral": Color(0.50, 0.45, 0.40),
+	"sweden": Color(0.20, 0.40, 0.90), "szwecja": Color(0.20, 0.40, 0.90),
+	"moscow": Color(0.70, 0.20, 0.15), "moskwa": Color(0.70, 0.20, 0.15),
+	"horde": Color(0.80, 0.60, 0.20), "osmanowie": Color(0.72, 0.45, 0.12),
+	"kozacy": Color(0.20, 0.45, 0.70), "brandenburgia": Color(0.25, 0.28, 0.32),
+	"polska": Color(0.85, 0.10, 0.12), "beast": Color(0.35, 0.25, 0.15),
+}
 
 var wm: Node2D
 var cam2d: Camera2D
@@ -282,72 +288,75 @@ func _sprite(tex: Texture2D, width: float, parent: Node3D, y := 0.0, fixed_y := 
 	return s
 
 
-## Jednostka/bohater: podstawka w kolorze frakcji + sprite z PNG 2D (jednostka) + medalion portretu.
-func _figure(col: Color, pos: Vector3, portrait: Texture2D, unit_tex: Texture2D = null, is_hero := false) -> Node3D:
+func _faction_color(fac: String) -> Color:
+	if fac.begins_with("beast_"):
+		return FAC_COL["beast"]
+	if fac.begins_with("myhero_"):
+		fac = fac.substr(7)
+	return FAC_COL.get(fac, Color(0.45, 0.32, 0.55))
+
+
+## Jednostka/bohater: podstawka frakcji + bryła 3D + medalion portretu (billboard) + chorągiew.
+func _figure(col: Color, pos: Vector3, portrait: Texture2D, unit_kind: String, is_hero := false) -> Node3D:
 	var root := Node3D.new()
 	root.position = pos
 	_disc(Color(0, 0, 0), 0.62, 0.02, root)
 	_disc(col.darkened(0.35), 0.55, 0.07, root, 0.01)
 	_disc(col, 0.5, 0.03, root, 0.08)
-	if unit_tex:
-		_sprite(unit_tex, 1.5 if is_hero else 1.35, root, 0.1)
+	var top := MeshFigures.add_unit(root, unit_kind, 0.12, is_hero)
 	if portrait:
-		var s := _sprite(portrait, 0.55 if unit_tex else 1.1, root, 1.45 if unit_tex else 0.1, unit_tex == null)
-		if unit_tex:
-			s.offset = Vector2.ZERO
-			s.no_depth_test = true
-			s.render_priority = 2
-	_banner(col.lightened(0.15), root, Vector3(-0.45, 0.1, -0.1), 1.6 if is_hero else 1.2)
+		var s := _sprite(portrait, 0.58, root, top + 0.18, false)
+		s.offset = Vector2.ZERO
+		s.no_depth_test = true
+		s.render_priority = 2
+	# chorągiew z tyłu figurki (profil +X), żeby nie wchodziła w kopię ani skrzydła
+	_banner(col.lightened(0.15), root, Vector3(-0.72, 0.12, -0.28), 1.95 if is_hero else 1.35)
 	_dyn.add_child(root)
 	return root
 
 
-func _army_unit_tex(a: Dictionary, fac: String) -> Texture2D:
+func _army_unit_kind(a: Dictionary, fac: String) -> String:
+	if fac.begins_with("myhero_"):
+		return "husaria"
 	var units: Array = a.get("units", [])
 	if units.size() > 0:
-		var t := UnitArt.texture_for(str(units[0]))
-		if t:
-			return t
+		return UnitArt.kind_of(str(units[0]))
 	if fac.begins_with("beast_"):
-		return UnitArt.texture_for(fac.substr(6))
-	return UnitArt.texture_for(str(FAC_UNIT.get(fac, "piechota")))
+		return UnitArt.kind_of(fac.substr(6))
+	return UnitArt.kind_of(str(FAC_UNIT.get(fac, "piechota")))
 
 
-## Miasto: kamienny cokół hex + mury w kolorze właściciela + billboard zamku z PNG 2D.
-func _city(pos: Vector3, tex: Texture2D, acc: Color, name: String) -> void:
+func _castle_style(cap: String) -> String:
+	var tex: Texture2D = wm._castle_png(cap)
+	var path := tex.resource_path if tex != null else ""
+	if "osmanowie" in path:
+		return "osmanowie"
+	if "szwecja" in path:
+		return "szwecja"
+	return "polska"
+
+
+## Miasto: cokół heksowy, mury i donżon 3D, wieżyczki w kolorze właściciela, chorągiew, nazwa.
+func _city(pos: Vector3, style: String, acc: Color, name: String) -> void:
 	var root := Node3D.new()
 	root.position = pos
-	var mi := MeshInstance3D.new()
-	var cm := CylinderMesh.new()
-	cm.radial_segments = 6
-	cm.top_radius = 0.95
-	cm.bottom_radius = 1.0
-	cm.height = 0.18
-	cm.material = _mat(Color(0.55, 0.52, 0.48))
-	mi.mesh = cm
-	mi.position.y = 0.09
-	root.add_child(mi)
-	for i in 6:
-		var a := TAU * i / 6.0
-		var tw := MeshInstance3D.new()
-		var tm := CylinderMesh.new()
-		tm.top_radius = 0.1
-		tm.bottom_radius = 0.12
-		tm.height = 0.45
-		tm.radial_segments = 8
-		tm.material = _mat(acc.darkened(0.2))
-		tw.mesh = tm
-		tw.position = Vector3(cos(a) * 0.88, 0.4, sin(a) * 0.88)
-		root.add_child(tw)
-	if tex:
-		_sprite(tex, 2.4, root, 0.15)
-	_banner(acc, root, Vector3(0.0, 0.18, -0.75), 2.4)
+	MeshFigures.add_castle(root, style, acc)
+	# Chorągiew z boku, przód heksu zostaje wolny — bohater na zamku stoi przed bramą.
+	_banner(acc, root, Vector3(-0.98, 0.16, 0.2), 2.25)
 	_dyn.add_child(root)
-	_label(name, pos + Vector3(0, 2.7, 0))
+	_label(name, pos + Vector3(0, 2.75, 0))
 
 
 func _cpos(c: Vector2i) -> Vector3:
 	return _p3(HexMath.axial_to_pixel(c.x, c.y, wm.hex_size), cell_h(c))
+
+
+## Figurka na heksie zamku stoi przed bramą, nie w środku donżonu.
+func _token_pos(c: Vector2i) -> Vector3:
+	var p := _cpos(c)
+	if wm._castles.has(c):
+		p += Vector3(0.15, 0, 1.05)
+	return p
 
 
 func _build_objects() -> void:
@@ -359,7 +368,7 @@ func _build_objects() -> void:
 		var p := _cpos(pos)
 		var acc := Color(0.2, 0.55, 1.0) if owned else Color(0.85, 0.15, 0.15)
 		if wm._explored.has(pos):
-			_city(p, wm._castle_png(str(reg.get("capital", ""))), acc, str(reg.get("capital", "")))
+			_city(p, _castle_style(str(reg.get("capital", ""))), acc, str(reg.get("capital", "")))
 	for pos in wm._resources.keys():
 		if not wm._explored.has(pos):
 			continue
@@ -397,19 +406,18 @@ func _build_objects() -> void:
 		var fac := str(a.get("faction", "neutral"))
 		var por := str(a.get("portrait", ""))
 		var tex: Texture2D = wm._hero_tex(por if por != "" else fac)
-		var col: Color = FAC_COL.get("beast" if fac.begins_with("beast_") else fac, Color(0.5, 0.3, 0.6))
+		var col := _faction_color(fac)
 		if str(a.get("id", "")) == wm.RIVAL_ID:
 			col = Color(0.55, 0.15, 0.7)
-		var ut := _army_unit_tex(a, fac)
-		if fac.begins_with("beast_") or fac.begins_with("myhero_"):
-			tex = null if fac.begins_with("beast_") else tex
-		_figure(col, _cpos(pos), tex, ut, fac.begins_with("myhero_"))
+		if fac.begins_with("beast_"):
+			tex = null
+		_figure(col, _token_pos(pos), tex, _army_unit_kind(a, fac), fac.begins_with("myhero_"))
 	var htex: Texture2D = null
 	if wm.active_portrait != "":
 		htex = wm._hero_tex(wm.active_portrait)
 	if htex == null:
 		htex = wm._deco("hero")
-	_hero = _figure(Color(0.85, 0.1, 0.12), _cpos(wm.hero_pos), htex, UnitArt.texture_for("husaria"), true)
+	_hero = _figure(Color(0.85, 0.1, 0.12), _token_pos(wm.hero_pos), htex, "husaria", true)
 
 
 func _process(_d: float) -> void:
@@ -433,7 +441,11 @@ func _process(_d: float) -> void:
 	# bohater w trakcie animacji
 	if _hero and is_instance_valid(_hero):
 		var hp: Vector2 = wm._hero_px if wm.is_animating else HexMath.axial_to_pixel(wm.hero_pos.x, wm.hero_pos.y, wm.hex_size)
-		_hero.position = _p3(hp, cell_h(HexMath.pixel_to_axial(hp, wm.hex_size)))
+		var hc := HexMath.pixel_to_axial(hp, wm.hex_size)
+		var hpos := _p3(hp, cell_h(hc))
+		if wm._castles.has(hc):
+			hpos += Vector3(0.15, 0, 1.05)
+		_hero.position = hpos
 	# ścieżka
 	var pp: Array = wm._path_preview
 	_path_mm.visible_instance_count = mini(pp.size(), 64)
