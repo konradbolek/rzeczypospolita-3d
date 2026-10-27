@@ -15,6 +15,7 @@ const SPELL_TARGET_ENEMY := {"blyskawica": true}
 @export var hex_size: float = 1.08
 const GROUND_Y := 0.12
 const Fig := preload("res://scripts/mesh_figures.gd")
+const Surf := preload("res://scripts/surface_tex.gd")
 @export var map_w: int = 11
 @export var map_h: int = 8
 
@@ -590,8 +591,14 @@ func queue_redraw() -> void:
 
 
 func _process(_dt: float) -> void:
-	if _mounted:
+	if _mounted and is_visible_in_tree():
 		_sync_visuals()
+
+
+func deactivate() -> void:
+	if _cam:
+		_cam.current = false
+	visible = false
 
 
 func _cell_pos(cell: Vector2i) -> Vector3:
@@ -608,35 +615,34 @@ func _trans(c: Color) -> StandardMaterial3D:
 
 
 func _mount_3d() -> void:
+	visible = true
 	if _cam == null:
-		var envn := WorldEnvironment.new()
+		# Środowisko tylko na kamerze bitwy — osobny WorldEnvironment w głównym
+		# widoku nadpisywałby niebo mapy. Bez cieni: drugi shadow pass w SubViewport
+		# potrafił zakleszczyć renderer; bitwa i tak jest w głównym widoku.
 		var e := Environment.new()
 		e.background_mode = Environment.BG_COLOR
 		e.background_color = Color(0.55, 0.72, 0.88)
 		e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 		e.ambient_light_color = Color(0.7, 0.72, 0.75)
-		e.ambient_light_energy = 0.45
-		envn.environment = e
-		add_child(envn)
+		e.ambient_light_energy = 0.55
 		var sun := DirectionalLight3D.new()
 		sun.rotation_degrees = Vector3(-48, -30, 0)
 		sun.light_energy = 1.15
-		sun.shadow_enabled = true
+		sun.shadow_enabled = false
 		add_child(sun)
 		_cam = Camera3D.new()
 		_cam.fov = 42.0
-		_cam.current = true
+		_cam.environment = e
 		add_child(_cam)
-		var vp := get_viewport()
-		if vp != null and vp.world_3d:
-			vp.world_3d.environment = e
 		_mat_move = _trans(Color(0.3, 0.55, 1.0, 0.4))
 		_mat_atk = _trans(Color(1.0, 0.25, 0.15, 0.48))
 		_mat_hover = _trans(Color(1, 1, 1, 0.22))
 		_mat_dim = _trans(Color(0, 0, 0, 0.45))
 		_mat_flash = _trans(Color(1, 0.2, 0.1, 0.6))
+	_cam.make_current()
 	if _view and is_instance_valid(_view):
-		_view.free()
+		_view.queue_free()
 	_tile_nodes.clear()
 	_unit_nodes.clear()
 	_prop_nodes.clear()
@@ -651,7 +657,10 @@ func _mount_3d() -> void:
 	var pm := PlaneMesh.new()
 	pm.size = Vector2(hex_size * float(map_w) * 3.2, hex_size * float(map_h) * 3.4)
 	var gm := StandardMaterial3D.new()
-	gm.albedo_color = Color(0.24, 0.38, 0.18)
+	gm.albedo_color = Color(0.92, 0.96, 0.88)
+	gm.albedo_texture = Surf.tex("grass")
+	gm.uv1_scale = Vector3(8.0, 8.0, 8.0)
+	gm.roughness = 0.95
 	pm.material = gm
 	ground.mesh = pm
 	ground.position = Vector3(mid.x, -0.01, mid.y)
@@ -664,12 +673,14 @@ func _mount_3d() -> void:
 			tile.position = Vector3(center.x, 0, center.y)
 			tile.set_meta("cell", cell)
 			var hsh := absi(hash(cell)) % 100
-			var col := Color(0.32, 0.48, 0.24).lerp(Color(0.45, 0.56, 0.28), float(hsh) / 100.0)
+			var surf := "grass"
 			if hsh % 7 == 0:
-				col = Color(0.48, 0.4, 0.26)
+				surf = "dirt"
 			if _is_siege and q >= 8:
-				col = col.lerp(Color(0.5, 0.44, 0.32), 0.4)
-			Fig.cyl(tile, hex_size * 0.98, 0.14, Vector3(0, 0.07, 0), col, 6)
+				surf = "sand"
+			elif _is_siege and q == 7:
+				surf = "stone"
+			Fig.disk(tile, hex_size * 0.98, 0.14, Vector3(0, 0.07, 0), surf)
 			var hi := MeshInstance3D.new()
 			hi.name = "Hi"
 			var hm := CylinderMesh.new()

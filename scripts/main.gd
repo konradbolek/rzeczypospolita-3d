@@ -765,6 +765,7 @@ func _open_battle(title: String = "Walka", enemy_units: Array = []) -> void:
 	_audio_play("battle_start")
 	_audio_play("sfx_hurrah")
 	_audio_track("battle")
+	_set_map_3d(false)
 	battle_overlay.field.spell_power = 5 * int(hero_skills.get("magia", 0))
 	city_panel.visible = false
 	world_map.set_process_unhandled_input(false)
@@ -797,7 +798,14 @@ func _army_as_battle_units() -> Array:
 	return out
 
 
+func _set_map_3d(on: bool) -> void:
+	var v3 := get_node_or_null("World3D")
+	if v3 and v3.has_method("set_map_shown"):
+		v3.set_map_shown(on)
+
+
 func _on_battle_closed(player_won: bool, survivors: Array = [], enemy_survivors: Array = []) -> void:
+	_set_map_3d(true)
 	_audio_play("victory" if player_won else "defeat")
 	_audio_track("map")
 	_record_battle(player_won, survivors)

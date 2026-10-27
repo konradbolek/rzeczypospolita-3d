@@ -1,5 +1,10 @@
 extends Node3D
 ## Widok 3D mapy: hexy i kamera orbit. Jednostki i zamki to bryły, nie billboardy PNG.
+const Surf := preload("res://scripts/surface_tex.gd")
+const TERRAIN_TEX := {
+	"morze": "water", "rzeka": "water", "bagno": "mud", "równina": "grass",
+	"step": "sand", "wybrzeze": "sand", "las": "grass", "wzgórze": "dirt", "gory": "rock",
+}
 
 const HEIGHTS := {"morze": 0.05, "rzeka": 0.1, "bagno": 0.18, "równina": 0.25, "step": 0.25,
 	"wybrzeze": 0.22, "las": 0.3, "wzgórze": 0.5, "gory": 0.85}
@@ -18,7 +23,8 @@ var cam: Camera3D
 var S := 1.0
 var yaw := 0.0
 var pitch := deg_to_rad(55.0)
-var _hex_mm: MultiMesh
+var _hex_mms: Dictionary = {}
+var _hex_local: Dictionary = {}
 var _cells: Array = []
 var _cell_idx: Dictionary = {}
 var _tree_mm: MultiMesh
@@ -34,6 +40,8 @@ var _sig_tiles := ""
 var _sig_obj := ""
 var _built_seed := -999999
 var _dragging := false
+var _env_node: WorldEnvironment
+var _env_res: Environment
 
 
 func setup(world_map: Node2D, camera2d: Camera2D) -> void:
@@ -53,6 +61,8 @@ func _ready() -> void:
 	e.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.environment = e
 	add_child(env)
+	_env_node = env
+	_env_res = e
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = Vector3(-55, 35, 0)
 	sun.light_energy = 1.0
@@ -120,36 +130,48 @@ func _terrain(c: Vector2i) -> String:
 func _build_tiles() -> void:
 	_cells = wm._cells.keys()
 	_cell_idx.clear()
-	var cm := CylinderMesh.new()
-	cm.radial_segments = 6
-	cm.rings = 0
-	cm.top_radius = 0.97
-	cm.bottom_radius = 0.97
-	cm.height = 1.0
-	cm.material = _mat(Color.WHITE, true)
-	_hex_mm = _new_mm(cm, _cells.size(), true)
+	_hex_mms.clear()
+	_hex_local.clear()
+	var buckets: Dictionary = {}
 	var trees: Array = []
 	var peaks: Array = []
 	for i in _cells.size():
 		var c: Vector2i = _cells[i]
 		_cell_idx[c] = i
-		var h := cell_h(c)
-		var p := _p3(HexMath.axial_to_pixel(c.x, c.y, wm.hex_size), h * 0.5)
-		_hex_mm.set_instance_transform(i, Transform3D(Basis.from_scale(Vector3(1, h, 1)), p))
 		var t := _terrain(c)
-		var hh: int = wm._cell_hash(c)
-		if t == "las":
-			for k in 3:
-				var a := float((hh >> (k * 3)) % 360) + k * 120.0
-				trees.append(p + Vector3(cos(deg_to_rad(a)) * 0.45, h * 0.5, sin(deg_to_rad(a)) * 0.45))
-		elif t == "gory":
-			peaks.append(p + Vector3(0, h * 0.5, 0))
+		if not buckets.has(t):
+			buckets[t] = []
+		buckets[t].append(c)
+	for t in buckets.keys():
+		var list: Array = buckets[t]
+		var cm := CylinderMesh.new()
+		cm.radial_segments = 6
+		cm.rings = 0
+		cm.top_radius = 0.97
+		cm.bottom_radius = 0.97
+		cm.height = 1.0
+		cm.material = Surf.terrain_material(str(TERRAIN_TEX.get(str(t), "grass")))
+		var mm := _new_mm(cm, list.size(), true)
+		_hex_mms[t] = mm
+		_hex_local[t] = list
+		for j in list.size():
+			var c: Vector2i = list[j]
+			var h := cell_h(c)
+			var p := _p3(HexMath.axial_to_pixel(c.x, c.y, wm.hex_size), h * 0.5)
+			mm.set_instance_transform(j, Transform3D(Basis.from_scale(Vector3(1, h, 1)), p))
+			var hh: int = wm._cell_hash(c)
+			if str(t) == "las":
+				for k in 3:
+					var a := float((hh >> (k * 3)) % 360) + k * 120.0
+					trees.append(p + Vector3(cos(deg_to_rad(a)) * 0.45, h * 0.5, sin(deg_to_rad(a)) * 0.45))
+			elif str(t) == "gory":
+				peaks.append(p + Vector3(0, h * 0.5, 0))
 	var tm := CylinderMesh.new()
 	tm.top_radius = 0.0
 	tm.bottom_radius = 0.28
 	tm.height = 0.8
 	tm.radial_segments = 8
-	tm.material = _mat(Color.WHITE, true)
+	tm.material = Surf.terrain_material("foliage")
 	_tree_mm = _new_mm(tm, trees.size(), true)
 	for i in trees.size():
 		_tree_mm.set_instance_transform(i, Transform3D(Basis(), trees[i] + Vector3(0, 0.4, 0)))
@@ -158,7 +180,7 @@ func _build_tiles() -> void:
 	pm.bottom_radius = 0.75
 	pm.height = 1.1
 	pm.radial_segments = 5
-	pm.material = _mat(Color.WHITE, true)
+	pm.material = Surf.terrain_material("rock")
 	_peak_mm = _new_mm(pm, peaks.size(), true)
 	for i in peaks.size():
 		_peak_mm.set_instance_transform(i, Transform3D(Basis(), peaks[i] + Vector3(0, 0.55, 0)))
@@ -192,28 +214,32 @@ func _px_cell(p: Vector3) -> Vector2i:
 	return HexMath.pixel_to_axial(Vector2(p.x, p.z) / S, wm.hex_size)
 
 
+func _hex_tint(c: Vector2i) -> Color:
+	if not wm._explored.has(c):
+		var n := float(wm._cell_hash(c) % 5) * 0.012
+		return Color(0.07 + n, 0.07 + n, 0.08 + n)
+	var tint := Color(0.96, 0.97, 0.94)
+	var reg: Dictionary = wm._region_by_id.get(wm._cells[c]["region_id"], {})
+	tint = tint.lerp(Color.html(str(reg.get("color", "#888888"))), 0.16)
+	if wm.is_road(c):
+		tint = tint.lerp(Color(0.78, 0.66, 0.46), 0.5)
+	if wm._bridges.has(c):
+		tint = Color(0.72, 0.58, 0.4)
+	if wm._reachable.has(c) and c != wm.hero_pos:
+		tint = tint.lerp(Color(0.72, 0.88, 1.0), 0.28)
+	return tint
+
+
 func _update_colors() -> void:
-	for i in _cells.size():
-		var c: Vector2i = _cells[i]
-		var col: Color
-		if not wm._explored.has(c):
-			var n := float(wm._cell_hash(c) % 7) * 0.006
-			col = Color(0.04 + n, 0.04 + n, 0.05 + n)
-		else:
-			col = wm.TERRAIN_COLORS.get(_terrain(c), Color(0.6, 0.6, 0.4))
-			var reg: Dictionary = wm._region_by_id.get(wm._cells[c]["region_id"], {})
-			col = col.lerp(Color.html(str(reg.get("color", "#888888"))), 0.12)
-			if wm.is_road(c):
-				col = col.lerp(Color(0.6, 0.5, 0.35), 0.45)
-			if wm._bridges.has(c):
-				col = Color(0.45, 0.32, 0.2)
-			if wm._reachable.has(c) and c != wm.hero_pos:
-				col = col.lerp(Color(0.55, 0.8, 1.0), 0.18)
-		_hex_mm.set_instance_color(i, col)
+	for t in _hex_mms.keys():
+		var mm: MultiMesh = _hex_mms[t]
+		var list: Array = _hex_local[t]
+		for j in list.size():
+			mm.set_instance_color(j, _hex_tint(list[j]))
 	for i in _tree_pos.size():
-		_tree_mm.set_instance_color(i, Color(0.13, 0.35, 0.15) if wm._explored.has(_px_cell(_tree_pos[i])) else Color(0.05, 0.05, 0.06))
+		_tree_mm.set_instance_color(i, Color(0.85, 0.95, 0.82) if wm._explored.has(_px_cell(_tree_pos[i])) else Color(0.08, 0.08, 0.09))
 	for i in _peak_pos.size():
-		_peak_mm.set_instance_color(i, Color(0.6, 0.58, 0.56) if wm._explored.has(_px_cell(_peak_pos[i])) else Color(0.05, 0.05, 0.06))
+		_peak_mm.set_instance_color(i, Color(0.95, 0.95, 0.93) if wm._explored.has(_px_cell(_peak_pos[i])) else Color(0.08, 0.08, 0.09))
 	for n in _scenery_nodes:
 		if is_instance_valid(n):
 			n.visible = wm._explored.has(n.get_meta("cell"))
@@ -481,7 +507,7 @@ func _build_scenery() -> void:
 func _process(_d: float) -> void:
 	if wm == null:
 		return
-	if _hex_mm == null or _cells.size() != wm._cells.size() or _built_seed != wm.map_seed:
+	if _hex_mms.is_empty() or _cells.size() != wm._cells.size() or _built_seed != wm.map_seed:
 		_built_seed = wm.map_seed
 		for ch in get_children():
 			if ch is MultiMeshInstance3D:
@@ -547,6 +573,17 @@ func screen_to_map(sp: Vector2) -> Vector2:
 		px = Vector2(hit.x, hit.z) / S
 		h = cell_h(HexMath.pixel_to_axial(px, wm.hex_size))
 	return px
+
+
+## Mapa chowa się na czas bitwy — jeden widok 3D, bez drugiego SubViewport.
+func set_map_shown(on: bool) -> void:
+	visible = on
+	set_process_unhandled_input(on)
+	if _env_node:
+		# Ukryty WorldEnvironment i tak maluje tło całego viewportu.
+		_env_node.environment = _env_res if on else null
+	if on and cam:
+		cam.make_current()
 
 
 func _unhandled_input(event: InputEvent) -> void:

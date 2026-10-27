@@ -1,11 +1,12 @@
 extends Control
 ## Pełnoekranowa nakładka walki.
+## Pole jest Node3D w głównym widoku. SubViewport z own_world_3d, kamerą i światłem
+## zawieszał grę przy wejściu w bitwę (renderer 4.7, drugi świat 3D + cienie).
 
 signal closed(player_won: bool, survivors: Array, enemy_survivors: Array)
 
-@onready var field: Node3D = $BattleView/SubViewport/BattleField
-@onready var battle_view: SubViewportContainer = $BattleView
-@onready var battle_vp: SubViewport = $BattleView/SubViewport
+@onready var field: Node3D = $"../../BattleField"
+@onready var battle_view: Control = $BattleView
 @onready var status_label: Label = $Top/StatusLabel
 @onready var result_box: PanelContainer = $ResultBox
 @onready var result_label: Label = $ResultBox/Margin/VBox/ResultLabel
@@ -26,17 +27,14 @@ func open_battle(title: String = "Walka", player_units: Array = [], is_siege: bo
 	visible = true
 	result_box.visible = false
 	_won = true
-	battle_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	field.visible = true
 	field.position = Vector3.ZERO
 	field.start_battle(player_units, is_siege, enemy_units)
 	status_label.text = title
 
 
 func _battle_local(screen_pos: Vector2) -> Vector2:
-	var box := battle_view.get_global_rect()
-	var rel := screen_pos - box.position
-	var sz := battle_vp.size
-	return Vector2(rel.x / maxf(1.0, box.size.x) * float(sz.x), rel.y / maxf(1.0, box.size.y) * float(sz.y))
+	return screen_pos
 
 
 func _input(event: InputEvent) -> void:
@@ -68,6 +66,6 @@ func _on_battle_over(player_won: bool) -> void:
 
 func _on_close() -> void:
 	visible = false
-	battle_vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+	field.deactivate()
 	var survivors: Array = field.get_survivor_unit_ids()
 	closed.emit(_won, survivors, field.get_enemy_survivor_unit_ids())
