@@ -1,11 +1,16 @@
 extends Node3D
-## Prosty widok 3D mapy: czyta stan z WorldMap (2D logika) i renderuje hexy, obiekty i kamerę.
+## Widok 3D mapy: hexy i kamera orbit. Jednostki i zamki to bryły, nie billboardy PNG.
 
 const HEIGHTS := {"morze": 0.05, "rzeka": 0.1, "bagno": 0.18, "równina": 0.25, "step": 0.25,
 	"wybrzeze": 0.22, "las": 0.3, "wzgórze": 0.5, "gory": 0.85}
-const FAC_COL := {"neutral": Color(0.5, 0.45, 0.4), "sweden": Color(0.2, 0.4, 0.9), "moscow": Color(0.7, 0.2, 0.15),
-	"horde": Color(0.8, 0.6, 0.2), "beast": Color(0.35, 0.25, 0.15)}
-const Fig := preload("res://scripts/mesh_figures.gd")
+const FAC_COL := {
+	"neutral": Color(0.50, 0.45, 0.40),
+	"sweden": Color(0.20, 0.40, 0.90), "szwecja": Color(0.20, 0.40, 0.90),
+	"moscow": Color(0.70, 0.20, 0.15), "moskwa": Color(0.70, 0.20, 0.15),
+	"horde": Color(0.80, 0.60, 0.20), "osmanowie": Color(0.72, 0.45, 0.12),
+	"kozacy": Color(0.20, 0.45, 0.70), "brandenburgia": Color(0.25, 0.28, 0.32),
+	"polska": Color(0.85, 0.10, 0.12), "beast": Color(0.35, 0.25, 0.15),
+}
 
 var wm: Node2D
 var cam2d: Camera2D
@@ -214,6 +219,19 @@ func _update_colors() -> void:
 			n.visible = wm._explored.has(n.get_meta("cell"))
 
 
+func _billboard(tex: Texture2D, width: float, pos: Vector3) -> Sprite3D:
+	var s := Sprite3D.new()
+	s.texture = tex
+	s.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	s.shaded = false
+	s.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
+	s.pixel_size = width / float(maxi(1, tex.get_width()))
+	s.offset = Vector2(0, tex.get_height() * 0.5)
+	s.position = pos
+	_dyn.add_child(s)
+	return s
+
+
 func _label(txt: String, pos: Vector3, col := Color(1, 0.95, 0.8)) -> void:
 	var l := Label3D.new()
 	l.text = txt
@@ -231,39 +249,121 @@ const FAC_UNIT := {"sweden": "arkebuzerzy", "moscow": "jazda", "horde": "lucznic
 	"kozacy": "lisowczycy", "brandenburgia": "halabardnicy", "polska": "husaria"}
 
 
-## Jednostka / bohater: bryła low-poly, podstawka i chorągiew. Portret zostaje w UI.
-func _figure(col: Color, pos: Vector3, unit_id: String, is_hero := false) -> Node3D:
+func _disc(col: Color, r: float, h: float, parent: Node3D, y := 0.0) -> void:
+	var mi := MeshInstance3D.new()
+	var m := CylinderMesh.new()
+	m.top_radius = r
+	m.bottom_radius = r * 1.05
+	m.height = h
+	m.radial_segments = 24
+	m.material = _mat(col)
+	mi.mesh = m
+	mi.position.y = y + h * 0.5
+	parent.add_child(mi)
+
+
+func _banner(col: Color, parent: Node3D, at: Vector3, h := 1.2) -> void:
+	var pole := MeshInstance3D.new()
+	var pm := CylinderMesh.new()
+	pm.top_radius = 0.025
+	pm.bottom_radius = 0.025
+	pm.height = h
+	pm.material = _mat(Color(0.3, 0.2, 0.1))
+	pole.mesh = pm
+	pole.position = at + Vector3(0, h * 0.5, 0)
+	parent.add_child(pole)
+	var fl := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = Vector3(0.35, 0.22, 0.02)
+	bm.material = _mat(col)
+	fl.mesh = bm
+	fl.position = at + Vector3(0.18, h - 0.13, 0)
+	parent.add_child(fl)
+
+
+func _sprite(tex: Texture2D, width: float, parent: Node3D, y := 0.0, fixed_y := true) -> Sprite3D:
+	var s := Sprite3D.new()
+	s.texture = tex
+	s.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y if fixed_y else BaseMaterial3D.BILLBOARD_ENABLED
+	s.shaded = false
+	s.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
+	s.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	s.pixel_size = width / float(maxi(1, tex.get_width()))
+	s.offset = Vector2(0, tex.get_height() * 0.5)
+	s.position.y = y
+	parent.add_child(s)
+	return s
+
+
+func _faction_color(fac: String) -> Color:
+	if fac.begins_with("beast_"):
+		return FAC_COL["beast"]
+	if fac.begins_with("myhero_"):
+		fac = fac.substr(7)
+	return FAC_COL.get(fac, Color(0.45, 0.32, 0.55))
+
+
+## Jednostka/bohater: podstawka frakcji + bryła 3D + medalion portretu (billboard) + chorągiew.
+func _figure(col: Color, pos: Vector3, portrait: Texture2D, unit_kind: String, is_hero := false) -> Node3D:
 	var root := Node3D.new()
 	root.position = pos
-	Fig.cyl(root, 0.42, 0.06, Vector3(0, 0.03, 0), col.darkened(0.45), 16)
-	var body: Node3D = Fig.unit(unit_id, col)
-	body.position.y = 0.06
-	if is_hero:
-		body.scale = Vector3(1.15, 1.15, 1.15)
-	root.add_child(body)
-	Fig.banner(root, col.lightened(0.12), Vector3(-0.38, 0.08, -0.12), 1.35 if is_hero else 1.05)
+	_disc(Color(0, 0, 0), 0.62, 0.02, root)
+	_disc(col.darkened(0.35), 0.55, 0.07, root, 0.01)
+	_disc(col, 0.5, 0.03, root, 0.08)
+	var top := MeshFigures.add_unit(root, unit_kind, 0.12, is_hero)
+	if portrait:
+		var s := _sprite(portrait, 0.58, root, top + 0.18, false)
+		s.offset = Vector2.ZERO
+		s.no_depth_test = true
+		s.render_priority = 2
+	# chorągiew z tyłu figurki (profil +X), żeby nie wchodziła w kopię ani skrzydła
+	_banner(col.lightened(0.15), root, Vector3(-0.72, 0.12, -0.28), 1.95 if is_hero else 1.35)
 	_dyn.add_child(root)
 	return root
 
 
-func _army_unit_id(a: Dictionary, fac: String) -> String:
-	var units: Array = a.get("units", [])
-	if units.size() > 0:
-		return str(units[0])
-	if fac.begins_with("beast_"):
-		return fac.substr(6)
+func _army_unit_kind(a: Dictionary, fac: String) -> String:
 	if fac.begins_with("myhero_"):
 		return "husaria"
-	return str(FAC_UNIT.get(fac, "piechota"))
+	var units: Array = a.get("units", [])
+	if units.size() > 0:
+		return UnitArt.kind_of(str(units[0]))
+	if fac.begins_with("beast_"):
+		return UnitArt.kind_of(fac.substr(6))
+	return UnitArt.kind_of(str(FAC_UNIT.get(fac, "piechota")))
 
 
-func _place(node: Node3D, pos: Vector3) -> void:
-	node.position = pos
-	_dyn.add_child(node)
+func _castle_style(cap: String) -> String:
+	var tex: Texture2D = wm._castle_png(cap)
+	var path := tex.resource_path if tex != null else ""
+	if "osmanowie" in path:
+		return "osmanowie"
+	if "szwecja" in path:
+		return "szwecja"
+	return "polska"
+
+
+## Miasto: cokół heksowy, mury i donżon 3D, wieżyczki w kolorze właściciela, chorągiew, nazwa.
+func _city(pos: Vector3, style: String, acc: Color, name: String) -> void:
+	var root := Node3D.new()
+	root.position = pos
+	MeshFigures.add_castle(root, style, acc)
+	# Chorągiew z boku, przód heksu zostaje wolny — bohater na zamku stoi przed bramą.
+	_banner(acc, root, Vector3(-0.98, 0.16, 0.2), 2.25)
+	_dyn.add_child(root)
+	_label(name, pos + Vector3(0, 2.75, 0))
 
 
 func _cpos(c: Vector2i) -> Vector3:
 	return _p3(HexMath.axial_to_pixel(c.x, c.y, wm.hex_size), cell_h(c))
+
+
+## Figurka na heksie zamku stoi przed bramą, nie w środku donżonu.
+func _token_pos(c: Vector2i) -> Vector3:
+	var p := _cpos(c)
+	if wm._castles.has(c):
+		p += Vector3(0.15, 0, 1.05)
+	return p
 
 
 func _build_objects() -> void:
@@ -275,34 +375,47 @@ func _build_objects() -> void:
 		var p := _cpos(pos)
 		var acc := Color(0.2, 0.55, 1.0) if owned else Color(0.85, 0.15, 0.15)
 		if wm._explored.has(pos):
-			_place(Fig.castle(acc), p)
-			_label(str(reg.get("capital", "")), p + Vector3(0, 2.15, 0))
+			_city(p, _castle_style(str(reg.get("capital", ""))), acc, str(reg.get("capital", "")))
 	for pos in wm._resources.keys():
 		if not wm._explored.has(pos):
 			continue
 		var r: Dictionary = wm._resources[pos]
-		_place(Fig.resource(str(r.get("type", "")), bool(r.get("owned", false))), _cpos(pos))
+		var node := MeshFigures.resource(str(r.get("type", "")), bool(r.get("owned", false)))
+		node.position = _cpos(pos)
+		_dyn.add_child(node)
 	for pos in wm._artifacts.keys():
 		if not wm._explored.has(pos):
 			continue
-		_place(Fig.artifact(str(wm._artifacts[pos])), _cpos(pos))
+		var art := MeshFigures.artifact(str(wm._artifacts[pos]))
+		art.position = _cpos(pos)
+		_dyn.add_child(art)
 	for pos in wm._ports.keys():
 		if not wm._explored.has(pos):
 			continue
 		var port_pos := _cpos(pos)
-		_place(Fig.port(), port_pos)
+		var port := MeshFigures.port()
+		port.position = port_pos
+		_dyn.add_child(port)
 		_label(str(wm._ports[pos].get("name", "")), port_pos + Vector3(0, 1.15, 0), Color(0.75, 0.88, 1.0))
 	for pos in wm._armies.keys():
 		if not wm._explored.has(pos):
 			continue
 		var a: Dictionary = wm._armies[pos]
 		var fac := str(a.get("faction", "neutral"))
-		var col: Color = FAC_COL.get("beast" if fac.begins_with("beast_") else fac, Color(0.5, 0.3, 0.6))
+		var por := str(a.get("portrait", ""))
+		var tex: Texture2D = wm._hero_tex(por if por != "" else fac)
+		var col := _faction_color(fac)
 		if str(a.get("id", "")) == wm.RIVAL_ID:
 			col = Color(0.55, 0.15, 0.7)
-		var heroish: bool = fac.begins_with("myhero_") or str(a.get("id", "")) == wm.RIVAL_ID
-		_figure(col, _cpos(pos), _army_unit_id(a, fac), heroish)
-	_hero = _figure(Color(0.85, 0.1, 0.12), _cpos(wm.hero_pos), "husaria", true)
+		if fac.begins_with("beast_"):
+			tex = null
+		_figure(col, _token_pos(pos), tex, _army_unit_kind(a, fac), fac.begins_with("myhero_"))
+	var htex: Texture2D = null
+	if wm.active_portrait != "":
+		htex = wm._hero_tex(wm.active_portrait)
+	if htex == null:
+		htex = wm._deco("hero")
+	_hero = _figure(Color(0.85, 0.1, 0.12), _token_pos(wm.hero_pos), htex, "husaria", true)
 
 
 func _scenery_kind(terrain: String, h2: int) -> String:
@@ -357,7 +470,7 @@ func _build_scenery() -> void:
 		var kind := _scenery_kind(_terrain(cell), h2)
 		if kind == "":
 			continue
-		var n := Fig.scenery(kind)
+		var n := MeshFigures.scenery(kind)
 		n.position = _cpos(cell) + Vector3(0.12, 0, 0.18)
 		n.set_meta("cell", cell)
 		n.visible = false
@@ -383,15 +496,19 @@ func _process(_d: float) -> void:
 	for rp in wm._resources.keys():
 		if bool(wm._resources[rp].get("owned", false)):
 			owned_n += 1
-	var so := "%d|%s|%s|%d|%d|%d|%s|%d" % [wm._explored.size(), str(wm._armies.keys()), str(wm.hero_pos), wm._artifacts.size(),
-		wm._resources.size(), owned_n, str(wm.owned_region_ids), wm.map_seed]
+	var so := "%d|%s|%s|%d|%d|%d|%s|%s|%d" % [wm._explored.size(), str(wm._armies.keys()), str(wm.hero_pos), wm._artifacts.size(),
+		wm._resources.size(), owned_n, str(wm.owned_region_ids), wm.active_portrait, wm.map_seed]
 	if so != _sig_obj and not wm.is_animating:
 		_sig_obj = so
 		_build_objects()
 	# bohater w trakcie animacji
 	if _hero and is_instance_valid(_hero):
 		var hp: Vector2 = wm._hero_px if wm.is_animating else HexMath.axial_to_pixel(wm.hero_pos.x, wm.hero_pos.y, wm.hex_size)
-		_hero.position = _p3(hp, cell_h(HexMath.pixel_to_axial(hp, wm.hex_size)))
+		var hc := HexMath.pixel_to_axial(hp, wm.hex_size)
+		var hpos := _p3(hp, cell_h(hc))
+		if wm._castles.has(hc):
+			hpos += Vector3(0.15, 0, 1.05)
+		_hero.position = hpos
 	# ścieżka
 	var pp: Array = wm._path_preview
 	_path_mm.visible_instance_count = mini(pp.size(), 64)

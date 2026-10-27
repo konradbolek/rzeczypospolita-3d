@@ -709,11 +709,14 @@ func _build_unit_nodes() -> void:
 	for i in _units.size():
 		var u: Dictionary = _units[i]
 		var n := Node3D.new()
-		var body := Fig.unit(str(u.get("unit_id", "piechota")), u["color"])
+		Fig.cyl(n, 0.36, 0.045, Vector3(0, 0.03, 0), u["color"], 14)
+		var body := Node3D.new()
+		body.name = "Body"
 		body.scale = Vector3(0.82, 0.82, 0.82)
 		if not bool(u["player"]):
 			body.rotation.y = PI
 		n.add_child(body)
+		MeshFigures.add_unit(body, str(u.get("unit_id", "piechota")), 0.0, false)
 		var sel := MeshInstance3D.new()
 		sel.name = "Sel"
 		var sm := CylinderMesh.new()
