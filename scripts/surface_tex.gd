@@ -44,6 +44,9 @@ const SCALE := {
 
 static var _tex: Dictionary = {}
 static var _mats: Dictionary = {}
+## Bitwa: unshaded + UV siatki. Triplanar (osobny shader na każdą bryłę) na Forward+/Metal
+## potrafił domalować armię i zakleszczyć następną klatkę.
+static var battle_safe := false
 
 
 static func pick(id: String, salt: int) -> String:
@@ -101,6 +104,12 @@ static func _auto(col: Color, metal: float) -> String:
 
 
 static func material(col: Color, rough: float = 0.84, metal: float = 0.0, emit: float = 0.0, surf: String = "") -> StandardMaterial3D:
+	if battle_safe:
+		var safe := style(col, 0.0, surf)
+		# style() prawie wybiela teksturę. W bitwie kolor sylwetki ma zostać czytelny,
+		# ale albedo (płótno, stal, drewno) nadal mnoży barwę. Bez triplanaru.
+		var tint: Color = (safe["tint"] as Color).lerp(col, 0.5)
+		return unshaded(str(safe["id"]), tint, 1.0)
 	var st := style(col, metal, surf)
 	var tint: Color = st["tint"]
 	var id := str(st["id"])
@@ -129,8 +138,45 @@ static func material(col: Color, rough: float = 0.84, metal: float = 0.0, emit: 
 	return m
 
 
+## Płaski albedo (UV siatki, bez triplanaru). Miasto i inne małe sceny.
+static func shaded(id: String, tint: Color = Color.WHITE, repeats: float = 2.0) -> StandardMaterial3D:
+	return _textured(id, tint, repeats, false)
+
+
+## Bitwa: bez światła, bez cieni, bez triplanaru.
+static func unshaded(id: String, tint: Color = Color.WHITE, scale: float = 1.0) -> StandardMaterial3D:
+	return _textured(id, tint, scale, true)
+
+
+static func _textured(id: String, tint: Color, repeats: float, flat_shade: bool) -> StandardMaterial3D:
+	var key := "%s:%s:%d:%d:%d:%.2f" % [
+		"safe" if flat_shade else "city",
+		id,
+		int(tint.r * 255.0), int(tint.g * 255.0), int(tint.b * 255.0),
+		repeats,
+	]
+	if _mats.has(key):
+		return _mats[key]
+	var m := StandardMaterial3D.new()
+	m.albedo_color = tint
+	m.roughness = 0.9
+	m.metallic = 0.0
+	m.uv1_triplanar = false
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	if flat_shade:
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var t := tex(id) if id != "" else null
+	if t != null:
+		m.albedo_texture = t
+		m.uv1_scale = Vector3(repeats, repeats, repeats)
+	_mats[key] = m
+	return m
+
+
 ## Heksy terenu: UV czapy cylindra, bez triplanaru (dużo instancji). Vertex color przyciemnia mgłę.
 static func terrain_material(id: String) -> StandardMaterial3D:
+	if battle_safe:
+		return unshaded(id, Color.WHITE, 1.15)
 	var key := "terrain:" + id
 	if _mats.has(key):
 		return _mats[key]

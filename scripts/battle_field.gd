@@ -61,6 +61,17 @@ var _mounted := false
 ## Pusta bitwa nie może co klatkę brudzić materiałów — na Metalu drugi frame się zawiesza.
 var _visual_dirty := false
 var _ai_steps := 0
+var _rig: Node3D
+var _env: WorldEnvironment
+var _sun: DirectionalLight3D
+var _spawn_token := 0
+var _trace := false
+var _frames := 0
+
+
+func _ready() -> void:
+	var args := OS.get_cmdline_user_args()
+	_trace = "--battle" in args or "--battle-siege" in args
 
 
 func start_battle(player_units: Array = [], is_siege: bool = false, enemy_units: Array = []) -> void:
@@ -99,7 +110,7 @@ func start_battle(player_units: Array = [], is_siege: bool = false, enemy_units:
 			_units[-1]["range"] = int(e.get("range", 1))
 		_add_siege_structures()
 		status.emit("Twoja tura — wybierz jednostkę")
-		_mount_3d()
+		_begin_view()
 		return
 	_add_siege_structures()
 	var hp_bonus := 10 if is_siege else 0
@@ -109,7 +120,7 @@ func start_battle(player_units: Array = [], is_siege: bool = false, enemy_units:
 	if is_siege or player_units.size() >= 3:
 		_units.append(_mk("Straż zamkowa" if is_siege else "Jazda wroga", "enemy_j", false, Vector2i(8, 4), 32 + hp_bonus, 11 + dmg_bonus, 5, Color(0.6, 0.1, 0.1)))
 	status.emit("Twoja tura — wybierz jednostkę")
-	_mount_3d()
+	_begin_view()
 
 
 ## Zwraca "" gdy OK, inaczej powód odmowy.
@@ -618,6 +629,10 @@ func queue_redraw() -> void:
 
 
 func _process(_dt: float) -> void:
+	if _mounted:
+		_frames += 1
+		if _trace and (_frames <= 4 or _frames % 60 == 0):
+			print("BATTLE_ALIVE ", _frames)
 	if not _mounted or not is_visible_in_tree():
 		return
 	var live_fx := animating or not _fx_proj.is_empty() or not _fx_lunge.is_empty() or not _fx_flash.is_empty()
@@ -629,12 +644,15 @@ func _process(_dt: float) -> void:
 
 
 func deactivate() -> void:
+	_spawn_token += 1
 	_mounted = false
 	_visual_dirty = false
 	visible = false
-	# Kamera należy do mapy — nie wyłączać jej stąd i nie zwalniać.
+	Surf.battle_safe = false
 	_cam = null
+	_sun = null
 	_drop_view()
+	_drop_rig()
 
 
 func _cell_pos(cell: Vector2i) -> Vector3:
@@ -650,9 +668,12 @@ func _trans(c: Color) -> StandardMaterial3D:
 	return m
 
 
-func _world() -> Node:
-	var p := get_parent()
-	return p.get_node_or_null("World3D") if p else null
+func _drop_rig() -> void:
+	_env = null
+	if _rig and is_instance_valid(_rig):
+		var old := _rig
+		_rig = null
+		old.free()
 
 
 func _drop_view() -> void:
@@ -682,7 +703,6 @@ func _ensure_mats() -> void:
 	_mat_flash = _trans(Color(1, 0.2, 0.1, 0.6))
 
 
-## Jedno światło mapy ma wyłączone cienie. Te siatki i tak nie wchodzą w shadow pass.
 func _no_shadows(n: Node) -> void:
 	if n is GeometryInstance3D:
 		(n as GeometryInstance3D).cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -690,10 +710,96 @@ func _no_shadows(n: Node) -> void:
 		_no_shadows(ch)
 
 
-func _mount_3d() -> void:
+## Mapa jest już poza drzewem. Czekamy klatkę (atlas cieni mapy spada bez nowych siatek),
+## potem własne światło BEZ cieni i jednostki po jednej na klatkę.
+func _begin_view() -> void:
+	_spawn_token += 1
+	var token := _spawn_token
+	_mounted = false
+	_frames = 0
 	visible = true
+	Surf.battle_safe = true
 	_ensure_mats()
 	_drop_view()
+	_drop_rig()
+	_blog("BATTLE_DETACH_WAIT")
+	await get_tree().process_frame
+	if not _spawn_alive(token):
+		return
+	_ensure_rig()
+	_build_static()
+	_blog("BATTLE_GROUND")
+	await get_tree().process_frame
+	if not _spawn_alive(token):
+		return
+	for i in _units.size():
+		_spawn_unit(i)
+		_blog("BATTLE_UNIT %d" % i)
+		await get_tree().process_frame
+		if not _spawn_alive(token):
+			return
+	_sync_props()
+	_sync_tiles()
+	_sync_units()
+	_mounted = true
+	_visual_dirty = false
+	_blog("BATTLE_READY units=%d shadows=%s triplanar=%d label3d=%d" % [
+		_units.size(),
+		str(_sun.shadow_enabled) if _sun else "nil",
+		_count_triplanar(self),
+		_count_label3d(self),
+	])
+
+
+func _spawn_alive(token: int) -> bool:
+	if token != _spawn_token or not is_inside_tree():
+		if token == _spawn_token:
+			Surf.battle_safe = false
+		return false
+	return true
+
+
+func _blog(msg: String) -> void:
+	if _trace:
+		print(msg)
+
+
+func _ensure_rig() -> void:
+	_rig = Node3D.new()
+	_rig.name = "Rig"
+	add_child(_rig)
+	var e := Environment.new()
+	e.background_mode = Environment.BG_COLOR
+	e.background_color = Color(0.56, 0.74, 0.9)
+	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	e.ambient_light_color = Color(0.84, 0.86, 0.88)
+	e.ambient_light_energy = 1.0
+	e.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+	_env = WorldEnvironment.new()
+	_env.name = "BattleEnv"
+	_env.environment = e
+	_rig.add_child(_env)
+	# shadow_enabled = false ZANIM węzeł wejdzie do drzewa — inaczej atlas zdąży powstać.
+	_sun = DirectionalLight3D.new()
+	_sun.name = "BattleSun"
+	_sun.shadow_enabled = false
+	_sun.light_energy = 1.05
+	_sun.rotation_degrees = Vector3(-42, -28, 0)
+	_rig.add_child(_sun)
+	var mid := HexMath.axial_to_pixel(int(map_w / 2), int(map_h / 2), hex_size)
+	var target := Vector3(mid.x, 0.3, mid.y)
+	_cam = Camera3D.new()
+	_cam.name = "BattleCam"
+	_cam.fov = 42.0
+	_cam.near = 0.08
+	_cam.far = 80.0
+	_cam.position = target + Vector3(0.2, hex_size * 8.2, hex_size * 7.4)
+	_rig.add_child(_cam)
+	_cam.look_at(target, Vector3.UP)
+	_cam.current = true
+
+
+func _build_static() -> void:
 	_view = Node3D.new()
 	_view.name = "View"
 	add_child(_view)
@@ -701,14 +807,10 @@ func _mount_3d() -> void:
 	var ground := MeshInstance3D.new()
 	var pm := PlaneMesh.new()
 	pm.size = Vector2(hex_size * float(map_w) * 3.2, hex_size * float(map_h) * 3.4)
-	var gm := StandardMaterial3D.new()
-	gm.albedo_color = Color(0.92, 0.96, 0.88)
-	gm.albedo_texture = Surf.tex("grass")
-	gm.uv1_scale = Vector3(8.0, 8.0, 8.0)
-	gm.roughness = 0.95
-	pm.material = gm
+	pm.material = Surf.unshaded("grass", Color(0.92, 0.96, 0.88), 4.0)
 	ground.mesh = pm
 	ground.position = Vector3(mid.x, -0.01, mid.y)
+	ground.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_view.add_child(ground)
 	for r in map_h:
 		for q in map_w:
@@ -737,6 +839,7 @@ func _mount_3d() -> void:
 			hi.mesh = hm
 			hi.position.y = 0.16
 			hi.visible = false
+			hi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			tile.add_child(hi)
 			_view.add_child(tile)
 			_tile_nodes.append(tile)
@@ -753,55 +856,52 @@ func _mount_3d() -> void:
 	_fx_root = Node3D.new()
 	_fx_root.name = "Fx"
 	_view.add_child(_fx_root)
-	_build_unit_nodes()
-	var target := Vector3(mid.x, 0.3, mid.y)
-	var eye := target + Vector3(0.2, hex_size * 8.2, hex_size * 7.4)
-	var world := _world()
-	if world and world.has_method("aim_for_battle"):
-		# Ta sama kamera co mapa. Własna Camera3D + Environment robiły drugi pass.
-		_cam = world.aim_for_battle(eye, target)
-	elif _cam == null:
-		_cam = Camera3D.new()
-		_cam.fov = 42.0
-		_cam.far = 120.0
-		add_child(_cam)
-		_cam.position = eye
-		_cam.look_at(target, Vector3.UP)
-		_cam.current = true
-	_mounted = true
-	_visual_dirty = true
-	_sync_visuals()
 	_no_shadows(_view)
-	_visual_dirty = false
 
 
-func _build_unit_nodes() -> void:
-	for i in _units.size():
-		var u: Dictionary = _units[i]
-		var n := Node3D.new()
-		Fig.cyl(n, 0.36, 0.045, Vector3(0, 0.03, 0), u["color"], 14)
-		var body := Node3D.new()
-		body.name = "Body"
-		body.scale = Vector3(0.82, 0.82, 0.82)
-		if not bool(u["player"]):
-			body.rotation.y = PI
-		n.add_child(body)
-		MeshFigures.add_unit(body, str(u.get("unit_id", "piechota")), 0.0, false)
-		var sel := MeshInstance3D.new()
-		sel.name = "Sel"
-		var sm := CylinderMesh.new()
-		sm.top_radius = 0.46
-		sm.bottom_radius = 0.46
-		sm.height = 0.035
-		sm.radial_segments = 18
-		sm.material = _trans(Color(1, 0.9, 0.25, 0.9))
-		sel.mesh = sm
-		sel.position.y = 0.03
-		sel.visible = false
-		n.add_child(sel)
-		_add_hp_bar(n, 1.08)
-		_view.add_child(n)
-		_unit_nodes.append(n)
+func _spawn_unit(i: int) -> void:
+	var u: Dictionary = _units[i]
+	var n := Node3D.new()
+	Fig.cyl(n, 0.36, 0.045, Vector3(0, 0.03, 0), u["color"], 14)
+	var body := Node3D.new()
+	body.name = "Body"
+	body.scale = Vector3(0.82, 0.82, 0.82)
+	if not bool(u["player"]):
+		body.rotation.y = PI
+	n.add_child(body)
+	MeshFigures.add_unit(body, str(u.get("unit_id", "piechota")), 0.0, false)
+	var sel := MeshInstance3D.new()
+	sel.name = "Sel"
+	var sm := CylinderMesh.new()
+	sm.top_radius = 0.46
+	sm.bottom_radius = 0.46
+	sm.height = 0.035
+	sm.radial_segments = 18
+	sm.material = _trans(Color(1, 0.9, 0.25, 0.9))
+	sel.mesh = sm
+	sel.position.y = 0.03
+	sel.visible = false
+	sel.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	n.add_child(sel)
+	var flash := MeshInstance3D.new()
+	flash.name = "Flash"
+	var fs := SphereMesh.new()
+	fs.radius = 0.42
+	fs.height = 0.84
+	fs.radial_segments = 8
+	fs.rings = 4
+	fs.material = _mat_flash
+	flash.mesh = fs
+	flash.position.y = 0.55
+	flash.visible = false
+	flash.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	n.add_child(flash)
+	_add_hp_bar(n, 1.08)
+	var px: Vector2 = HexMath.axial_to_pixel(u["pos"].x, u["pos"].y, hex_size)
+	n.position = Vector3(px.x, GROUND_Y, px.y)
+	_no_shadows(n)
+	_view.add_child(n)
+	_unit_nodes.append(n)
 
 
 func _add_hp_bar(n: Node3D, y: float) -> void:
@@ -822,8 +922,10 @@ func _bar(col: Color, w: float) -> MeshInstance3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_color = col
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.uv1_triplanar = false
 	b.material = m
 	mi.mesh = b
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	mi.set_meta("bar_mat", m)
 	return mi
 
@@ -934,27 +1036,14 @@ func _sync_units() -> void:
 		var sel := n.get_node_or_null("Sel")
 		if sel:
 			sel.visible = i == _selected
+		var flash := n.get_node_or_null("Flash") as MeshInstance3D
+		if flash:
+			flash.visible = _fx_flash.has(i)
+		# Przyciemnienie bez material_overlay — overlay dublował shader każdej bryły.
 		var acted := bool(u["acted"]) and bool(u["player"]) == _player_turn
-		var ov: Material = null
-		if _fx_flash.has(i):
-			_mat_flash.albedo_color = Color(1, 0.2, 0.1, clampf(float(_fx_flash[i]), 0.0, 1.0) * 0.7)
-			ov = _mat_flash
-		elif acted:
-			ov = _mat_dim
-		_apply_overlay(n, ov)
-
-
-func _apply_overlay(n: Node, mat: Material) -> void:
-	if n is GeometryInstance3D and str(n.name) not in ["HpBg", "HpFg", "Sel", "Tag"]:
-		var gi := n as GeometryInstance3D
-		var mid := 0
-		if mat != null:
-			mid = mat.get_instance_id()
-		if int(gi.get_meta("ov_id", -1)) != mid:
-			gi.set_meta("ov_id", mid)
-			gi.material_overlay = mat
-	for ch in n.get_children():
-		_apply_overlay(ch, mat)
+		var sc := 0.94 if acted else 1.0
+		if not is_equal_approx(n.scale.x, sc):
+			n.scale = Vector3(sc, sc, sc)
 
 
 func _sync_fx() -> void:
@@ -1081,3 +1170,62 @@ func _attack_sound(uid: String, ranged: bool) -> void:
 	elif uid in ["jazda", "dragonia", "husaria", "lisowczycy", "rajtarzy", "sipahi", "enemy_j", "bojarzy", "molojcy", "kirasjerzy"]:
 		snd = "sfx_charge"
 	_sfx(snd)
+
+
+func is_battle_ready() -> bool:
+	return _mounted
+
+
+func debug_frames() -> int:
+	return _frames
+
+
+func debug_selected() -> int:
+	return _selected
+
+
+func debug_shadow() -> bool:
+	return _sun != null and _sun.shadow_enabled
+
+
+func debug_label3d() -> int:
+	return _count_label3d(self)
+
+
+func debug_triplanar() -> int:
+	return _count_triplanar(self)
+
+
+## Klik w komórkę bez kamery — ścieżka testowa, ta sama co handle_pointer po picku.
+func debug_click_cell(cell: Vector2i) -> String:
+	if not _mounted:
+		return "not_ready"
+	_handle_click(cell)
+	return "selected=%d reachable=%d" % [_selected, _reachable.size()]
+
+
+func _count_label3d(n: Node) -> int:
+	var c := 1 if n is Label3D else 0
+	for ch in n.get_children():
+		c += _count_label3d(ch)
+	return c
+
+
+func _count_triplanar(n: Node) -> int:
+	var c := 0
+	if n is MeshInstance3D:
+		var mi := n as MeshInstance3D
+		var mats: Array = []
+		if mi.material_override:
+			mats.append(mi.material_override)
+		if mi.mesh:
+			for s in mi.mesh.get_surface_count():
+				var sm := mi.mesh.surface_get_material(s)
+				if sm:
+					mats.append(sm)
+		for mat in mats:
+			if mat is BaseMaterial3D and (mat as BaseMaterial3D).uv1_triplanar:
+				c += 1
+	for ch in n.get_children():
+		c += _count_triplanar(ch)
+	return c

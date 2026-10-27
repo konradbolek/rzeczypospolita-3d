@@ -1,8 +1,7 @@
 extends Control
 ## Pełnoekranowa nakładka walki.
-## Pole jest Node3D w głównym widoku i używa kamery oraz światła mapy.
-## Własna kamera, WorldEnvironment albo światło z cieniami zawiesza Forward+
-## na Metal/Vulkan w klatce po pierwszym narysowaniu armii.
+## Pole jest jedynym światem 3D: mapa schodzi z drzewa, a bitwa ma własne
+## światło utworzone od razu bez cieni. Nie dzielimy atlasu cieni z mapą.
 
 signal closed(player_won: bool, survivors: Array, enemy_survivors: Array)
 

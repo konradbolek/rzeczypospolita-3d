@@ -171,6 +171,8 @@ var _city_region_id: String = ""
 @onready var battle_overlay: Control = $UI/BattleOverlay
 @onready var camera: Camera2D = $Camera2D
 
+var _world3d: Node3D
+var _city3d: Node3D
 var _fight_army_id: String = ""
 var _siege_region_id: String = ""
 var _siege_region_name: String = ""
@@ -226,6 +228,12 @@ func _ready() -> void:
 	add_child(v3)
 	v3.setup(world_map, camera)
 	world_map.view3d = v3
+	_world3d = v3
+	_city3d = preload("res://scripts/city_view.gd").new()
+	_city3d.name = "CityView"
+	add_child(_city3d)
+	_city3d.building_picked.connect(_on_city_building_picked)
+	city_panel.building_focus.connect(_on_city_building_focus)
 	if "--menushot" in OS.get_cmdline_user_args():
 		var t := get_tree()
 		t.create_timer(2.0).timeout.connect(func(): t.root.get_texture().get_image().save_png("/tmp/rzp3d_m.png"); t.quit())
@@ -268,7 +276,7 @@ func _ready() -> void:
 		enter_city_button.text = "Wejdź do miasta (E)"
 	_build_menu()
 	_migrate_old_save()
-	if "--battle" in OS.get_cmdline_user_args() or "--battle-siege" in OS.get_cmdline_user_args():
+	if "--battle" in OS.get_cmdline_user_args() or "--battle-siege" in OS.get_cmdline_user_args() or "--city" in OS.get_cmdline_user_args():
 		_skip_menu = true
 	if _pending_load_slot > 0:
 		var slot := _pending_load_slot
@@ -299,7 +307,9 @@ func _ready() -> void:
 			_pending_tutorial = false
 			_tut_start()
 		_audio_track("map")
-		if "--battle" in OS.get_cmdline_user_args() or "--battle-siege" in OS.get_cmdline_user_args():
+		if "--city" in OS.get_cmdline_user_args():
+			_debug_city.call_deferred()
+		elif "--battle" in OS.get_cmdline_user_args() or "--battle-siege" in OS.get_cmdline_user_args():
 			_debug_battle.call_deferred()
 	else:
 		_show_main_menu()
@@ -354,7 +364,10 @@ func _refresh_city() -> void:
 	city_panel.res_ore = ore
 	if _city_region_id == "":
 		return
-	city_panel.refresh_economy(gold, castle_income(_city_region_id), army_summary(), get_buildings(_city_region_id))
+	var bld := get_buildings(_city_region_id)
+	city_panel.refresh_economy(gold, castle_income(_city_region_id), army_summary(), bld)
+	if _city3d and city_panel.visible:
+		_city3d.present(str(player_faction), true, bld)
 
 
 func _on_build_requested(bid: String) -> void:
@@ -769,6 +782,8 @@ func _open_battle(title: String = "Walka", enemy_units: Array = []) -> void:
 	_audio_play("battle_start")
 	_audio_play("sfx_hurrah")
 	_audio_track("battle")
+	if _city3d:
+		_city3d.dismiss()
 	_set_map_3d(false)
 	battle_overlay.field.spell_power = 5 * int(hero_skills.get("magia", 0))
 	city_panel.visible = false
@@ -803,16 +818,27 @@ func _army_as_battle_units() -> Array:
 
 
 func _set_map_3d(on: bool) -> void:
-	var v3 := get_node_or_null("World3D")
-	if v3 and v3.has_method("set_map_shown"):
-		v3.set_map_shown(on)
+	# Węzeł bywa wyjęty z drzewa — trzymaj referencję, nie szukaj po nazwie.
+	if _world3d and _world3d.has_method("set_map_shown"):
+		_world3d.set_map_shown(on)
 	# Pan mapy w trakcie bitwy ruszałby Camera2D, a po wznowieniu odświeżał całą mapę.
 	camera.set_process(on)
 	camera.set_process_unhandled_input(on)
 
 
+func _on_city_building_picked(bid: String) -> void:
+	if city_panel:
+		city_panel.focus_building(bid)
+
+
+func _on_city_building_focus(bid: String) -> void:
+	if _city3d:
+		_city3d.highlight(bid)
+
+
 func _on_battle_closed(player_won: bool, survivors: Array = [], enemy_survivors: Array = []) -> void:
-	_set_map_3d(true)
+	# Klatkę później: siatki bitwy już zwolnione, atlas cieni mapy wstaje osobno.
+	call_deferred("_set_map_3d", true)
 	_audio_play("victory" if player_won else "defeat")
 	_audio_track("map")
 	_record_battle(player_won, survivors)
@@ -910,19 +936,26 @@ func _on_castle_siege(region_id: String, region_name: String, capital: String) -
 func _on_city_entered(region_id: String, region_name: String, capital: String, owned_by_player: bool) -> void:
 	_city_region_id = region_id
 	var owned_b: Dictionary = get_buildings(region_id) if owned_by_player else {}
+	_set_map_3d(false)
 	city_panel.res_wood = wood
 	city_panel.res_ore = ore
 	city_panel.open_city(
 		region_id, region_name, capital, owned_by_player,
 		gold, castle_income(region_id), army_summary(), owned_b, BUILDING_DEFS
 	)
+	if _city3d:
+		_city3d.present(str(player_faction), owned_by_player, owned_b)
 	world_map.set_process_unhandled_input(false)
 	info_label.text = "W mieście: %s (%s)" % [capital, region_name]
 
 
 func _on_left_city() -> void:
+	if _city3d:
+		_city3d.dismiss()
 	_city_region_id = ""
 	world_map.set_process_unhandled_input(true)
+	if not battle_overlay.visible:
+		call_deferred("_set_map_3d", true)
 	info_label.text = "Opuszczono miasto"
 
 
@@ -3822,16 +3855,80 @@ func _debug_battle() -> void:
 	_open_battle("Oblężenie test" if siege else "Walka testowa")
 	if siege:
 		_siege_region_id = ""
-	print("BATTLE_MOUNTED")
-	for i in 180:
+	print("BATTLE_MAP_IN_TREE ", _world3d != null and _world3d.is_inside_tree())
+	var field = battle_overlay.field
+	var clicked := false
+	var moved := false
+	var input_ok := false
+	for i in 240:
 		await get_tree().process_frame
-		if i % 60 == 0:
-			print("BATTLE_FRAME ", i)
-	var shot := get_viewport().get_texture().get_image()
-	var shot_path := "/tmp/battle_siege.png" if siege else "/tmp/battle_field.png"
-	shot.save_png(shot_path)
-	print("BATTLE_SHOT ", shot_path)
-	print("BATTLE_OK")
+		if i % 30 == 0:
+			print("BATTLE_FRAME ", i, " ready=", field.is_battle_ready(), " alive=", field.debug_frames())
+		if not clicked and field.is_battle_ready():
+			clicked = true
+			print("BATTLE_INPUT ", field.debug_click_cell(Vector2i(1, 2)))
+		elif clicked and not moved and field.is_battle_ready() and field.debug_selected() >= 0 and field.debug_frames() >= 3:
+			moved = true
+			input_ok = true
+			print("BATTLE_INPUT_OK selected=", field.debug_selected())
+			print("BATTLE_INPUT_MOVE ", field.debug_click_cell(Vector2i(2, 2)))
+	var sun_off: bool = not bool(field.debug_shadow())
+	var labels: int = int(field.debug_label3d())
+	var tri: int = int(field.debug_triplanar())
+	var alive: int = int(field.debug_frames())
+	print("BATTLE_SUN ", not sun_off)
+	print("BATTLE_LABEL3D ", labels)
+	print("BATTLE_TRIPLANAR ", tri)
+	print("BATTLE_MAP_IN_TREE ", _world3d != null and _world3d.is_inside_tree())
+	print("BATTLE_ALIVE_END ", alive)
+	var tex := get_viewport().get_texture()
+	if tex:
+		var shot := tex.get_image()
+		if shot:
+			var shot_path := "/tmp/battle_siege.png" if siege else "/tmp/battle_field.png"
+			shot.save_png(shot_path)
+			print("BATTLE_SHOT ", shot_path)
+	battle_overlay._on_close()
+	for _i in 20:
+		await get_tree().process_frame
+	var back: bool = _world3d != null and _world3d.is_inside_tree()
+	print("BATTLE_MAP_BACK ", back)
+	print("BATTLE_OK" if input_ok and alive >= 30 and sun_off and labels == 0 and tri == 0 and back else "BATTLE_FAIL")
+	get_tree().quit()
+
+
+func _debug_city() -> void:
+	await get_tree().create_timer(1.2).timeout
+	print("CITY_ENTER")
+	var entered: bool = bool(world_map.try_enter_city())
+	print("CITY_OPEN ", entered)
+	var ready := false
+	for i in 120:
+		await get_tree().process_frame
+		if i % 30 == 0:
+			print("CITY_FRAME ", i, " ready=", _city3d.debug_ready(), " meshes=", _city3d.debug_mesh_count())
+		if not ready and _city3d.debug_ready() and _city3d.debug_mesh_count() > 10:
+			ready = true
+			_city3d.debug_pick("koszary")
+			print("CITY_INPUT ", city_panel.debug_selected())
+			print("CITY_RAY ", _city3d.debug_ray("ratusz"))
+	print("CITY_SUN ", _city3d.debug_shadow())
+	print("CITY_MAP_IN_TREE ", _world3d != null and _world3d.is_inside_tree())
+	var tex := get_viewport().get_texture()
+	if tex:
+		var shot := tex.get_image()
+		if shot:
+			shot.save_png("/tmp/city_3d.png")
+			print("CITY_SHOT /tmp/city_3d.png")
+	var ray_ok: bool = str(_city3d.debug_ray("koszary")) == "koszary"
+	print("CITY_RAY_KOSZARY ", _city3d.debug_ray("koszary"))
+	_on_left_city()
+	for _i in 20:
+		await get_tree().process_frame
+	var back: bool = _world3d != null and _world3d.is_inside_tree()
+	print("CITY_MAP_BACK ", back)
+	var ok: bool = ready and str(city_panel.debug_selected()) == "koszary" and not bool(_city3d.debug_shadow()) and ray_ok and back
+	print("CITY_OK" if ok else "CITY_FAIL")
 	get_tree().quit()
 
 

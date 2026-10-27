@@ -44,14 +44,7 @@ var _env_node: WorldEnvironment
 var _env_res: Environment
 var _sun: DirectionalLight3D
 var _battle_hold := false
-var _saved_sun_rot := Vector3.ZERO
-var _saved_sun_energy := 1.0
-var _saved_shadow_dist := 60.0
-var _saved_fov := 45.0
-var _saved_far := 400.0
-var _saved_bg := Color(0.03, 0.03, 0.05)
-var _saved_amb := Color(0.6, 0.6, 0.65)
-var _saved_amb_e := 0.35
+var _held_parent: Node = null
 
 
 func setup(world_map: Node2D, camera2d: Camera2D) -> void:
@@ -519,8 +512,8 @@ func _build_scenery() -> void:
 
 
 func _process(_d: float) -> void:
-	# Bitwa trzyma jedyną kamerę i jedyne światło. Tu nie wolno ich ruszać ani
-	# przebudowywać siatki — drugi shadow pass w tej samej klatce zawiesza Metal/Vulkan.
+	# W bitwie i w mieście ten węzeł jest wyjęty z drzewa. Nie ruszamy cieni stąd —
+	# przełączanie shadow_enabled / max_distance zostawiało atlas i wieszało Metal.
 	if _battle_hold or not visible or wm == null:
 		return
 	if _hex_mms.is_empty() or _cells.size() != wm._cells.size() or _built_seed != wm.map_seed:
@@ -591,96 +584,45 @@ func screen_to_map(sp: Vector2) -> Vector2:
 	return px
 
 
-## Bitwa zostaje w tym samym świecie 3D: jedna kamera, jedno światło, jedno środowisko.
-## Geometria mapy się chowa. Cienie są wyłączone — drugi shadow pass (albo stary,
-## liczony równolegle z nową kamerą) zawiesza Forward+ na Metal/Vulkan już po pierwszej klatce.
+## Bitwa i miasto biorą viewport na wyłączność. Mapa (światło z atlasem cieni,
+## Label3D, MultiMeshe, środowisko) schodzi z drzewa — samo ukrycie zostawiało
+## te zasoby w świecie i na Metal/Forward+ wisiało klatkę po pokazaniu armii.
 func set_map_shown(on: bool) -> void:
 	if on:
-		resume_map()
+		reattach_map()
 	else:
-		suspend_for_battle()
+		detach_for_exclusive_view()
 
 
-func suspend_for_battle() -> void:
-	if _battle_hold or cam == null or _sun == null:
+func detach_for_exclusive_view() -> void:
+	if _battle_hold:
 		return
 	_battle_hold = true
-	_saved_sun_rot = _sun.rotation
-	_saved_sun_energy = _sun.light_energy
-	_saved_shadow_dist = _sun.directional_shadow_max_distance
-	_saved_fov = cam.fov
-	_saved_far = cam.far
-	_saved_bg = _env_res.background_color
-	_saved_amb = _env_res.ambient_light_color
-	_saved_amb_e = _env_res.ambient_light_energy
-	# Najpierw zabić cienie, zanim bitwa dołoży własne siatki.
-	_sun.shadow_enabled = false
-	_sun.directional_shadow_max_distance = 0.01
 	set_process(false)
 	set_physics_process(false)
 	set_process_unhandled_input(false)
-	_set_map_geometry_visible(false)
-	_sun.light_energy = 1.15
-	_sun.rotation_degrees = Vector3(-48, -30, 0)
-	_env_res.background_color = Color(0.55, 0.72, 0.88)
-	_env_res.ambient_light_color = Color(0.7, 0.72, 0.75)
-	_env_res.ambient_light_energy = 0.55
-	if _env_node:
-		_env_node.environment = _env_res
-	cam.far = 120.0
-	cam.current = true
-	visible = true
 	if wm and wm.has_method("set_battle_paused"):
 		wm.set_battle_paused(true)
+	var p := get_parent()
+	if p:
+		_held_parent = p
+		p.remove_child(self)
 
 
-## Ustawia istniejącą kamerę na pole bitwy. Nie tworzy drugiej kamery ani światła.
-func aim_for_battle(pos: Vector3, target: Vector3) -> Camera3D:
-	cam.fov = 42.0
-	cam.position = pos
-	cam.look_at(target, Vector3.UP)
-	cam.current = true
-	return cam
-
-
-func resume_map() -> void:
-	if not _battle_hold:
+func reattach_map() -> void:
+	if not _battle_hold and is_inside_tree():
 		return
 	_battle_hold = false
-	_sun.rotation = _saved_sun_rot
-	_sun.light_energy = _saved_sun_energy
-	_sun.shadow_enabled = false
-	_sun.directional_shadow_max_distance = _saved_shadow_dist
-	cam.fov = _saved_fov
-	cam.far = _saved_far
-	_env_res.background_color = _saved_bg
-	_env_res.ambient_light_color = _saved_amb
-	_env_res.ambient_light_energy = _saved_amb_e
-	if _env_node:
-		_env_node.environment = _env_res
-	_set_map_geometry_visible(true)
+	if not is_inside_tree() and _held_parent and is_instance_valid(_held_parent):
+		_held_parent.add_child(self)
+	_held_parent = null
 	visible = true
 	set_process(true)
 	set_process_unhandled_input(true)
-	cam.current = true
+	if cam:
+		cam.current = true
 	if wm and wm.has_method("set_battle_paused"):
 		wm.set_battle_paused(false)
-	# Cienie mapy dopiero w następnej klatce, gdy siatki bitwy są już zwolnione.
-	call_deferred("_restore_map_shadows")
-
-
-func _restore_map_shadows() -> void:
-	if _battle_hold or _sun == null:
-		return
-	_sun.directional_shadow_max_distance = _saved_shadow_dist
-	_sun.shadow_enabled = true
-
-
-func _set_map_geometry_visible(on: bool) -> void:
-	for ch in get_children():
-		if ch == cam or ch == _sun or ch == _env_node:
-			continue
-		ch.visible = on
 
 
 func _unhandled_input(event: InputEvent) -> void:
