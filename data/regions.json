@@ -1,0 +1,116 @@
+{
+  "epoch": "ok. 1600",
+  "note": "Stolice ustawione geograficznie na siatce ~48×34 (N=Bałtyk, S=stepy, E=Litwa/Ukraina).",
+  "map_width": 48,
+  "map_height": 34,
+  "regions": [
+    {
+      "id": "pomorze_zach",
+      "name": "Pomorze Zach. (sąsiad)",
+      "capital": "Szczecin",
+      "capital_q": 6,
+      "capital_r": 6,
+      "color": "#495057",
+      "terrain_bias": "wybrzeze"
+    },
+    {
+      "id": "prusy",
+      "name": "Prusy Królewskie",
+      "capital": "Gdańsk",
+      "capital_q": 18,
+      "capital_r": 5,
+      "color": "#3d7ea6",
+      "terrain_bias": "wybrzeze"
+    },
+    {
+      "id": "inflanty",
+      "name": "Inflanty",
+      "capital": "Ryga",
+      "capital_q": 30,
+      "capital_r": 3,
+      "color": "#1d3557",
+      "terrain_bias": "wybrzeze"
+    },
+    {
+      "id": "wielkopolska",
+      "name": "Korona (Wielkopolska)",
+      "capital": "Poznań",
+      "capital_q": 11,
+      "capital_r": 11,
+      "color": "#d4a017",
+      "terrain_bias": "równina"
+    },
+    {
+      "id": "mazowsze",
+      "name": "Mazowsze",
+      "capital": "Warszawa",
+      "capital_q": 19,
+      "capital_r": 12,
+      "color": "#e8c547",
+      "terrain_bias": "równina"
+    },
+    {
+      "id": "zmudz",
+      "name": "Żmudź",
+      "capital": "Kowno",
+      "capital_q": 26,
+      "capital_r": 9,
+      "color": "#40916c",
+      "terrain_bias": "las"
+    },
+    {
+      "id": "litwa",
+      "name": "Litwa",
+      "capital": "Wilno",
+      "capital_q": 33,
+      "capital_r": 11,
+      "color": "#2d6a4f",
+      "terrain_bias": "las"
+    },
+    {
+      "id": "slask",
+      "name": "Śląsk (sąsiad)",
+      "capital": "Wrocław",
+      "capital_q": 8,
+      "capital_r": 17,
+      "color": "#6c757d",
+      "terrain_bias": "gory"
+    },
+    {
+      "id": "malopolska",
+      "name": "Korona (Małopolska)",
+      "capital": "Kraków",
+      "capital_q": 16,
+      "capital_r": 18,
+      "color": "#c45c26",
+      "terrain_bias": "wzgórze"
+    },
+    {
+      "id": "rus_czerwona",
+      "name": "Ruś Czerwona",
+      "capital": "Lwów",
+      "capital_q": 26,
+      "capital_r": 20,
+      "color": "#9b2226",
+      "terrain_bias": "wzgórze"
+    },
+    {
+      "id": "wolyn",
+      "name": "Wołyń / Podole",
+      "capital": "Kamieniec",
+      "capital_q": 25,
+      "capital_r": 26,
+      "color": "#bb3e03",
+      "terrain_bias": "step"
+    },
+    {
+      "id": "ukraina",
+      "name": "Ukraina (Kijowszczyzna)",
+      "capital": "Kijów",
+      "capital_q": 35,
+      "capital_r": 24,
+      "color": "#ca6702",
+      "terrain_bias": "step"
+    }
+  ]
+}

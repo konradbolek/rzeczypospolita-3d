@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect width="128" height="128" fill="#1a3a2a"/>
+  <polygon points="64,12 110,38 110,90 64,116 18,90 18,38" fill="#c9a227" stroke="#f5e6a3" stroke-width="3"/>
+  <text x="64" y="72" text-anchor="middle" font-family="serif" font-size="28" fill="#1a3a2a" font-weight="bold">RON</text>
+</svg>

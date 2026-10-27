@@ -1,0 +1,3740 @@
+extends Node2D
+
+const INCOME_PER_CASTLE := 100
+const MAX_ARMY_SLOTS := 7
+const HERO_MAX_LEVEL := 10
+const SKILL_MAX := 3
+const XP_FIELD := 40
+const XP_SIEGE := 80
+const XP_TEST := 20
+const SKILL_NAMES := {"atak": "Atak", "obrona": "Obrona", "logistyka": "Logistyka", "magia": "Magia"}
+
+const UNIT_CATALOG := {
+	"piechota": {
+		"name": "Piechota",
+		"cost": 80,
+		"hp": 40,
+		"dmg": 8,
+		"speed": 3,
+		"color": Color(0.2, 0.45, 0.9),
+	},
+	"lucznicy": {
+		"name": "Łucznicy",
+		"cost": 120,
+		"hp": 25,
+		"dmg": 10,
+		"speed": 3,
+		"range": 3,
+		"color": Color(0.3, 0.7, 1.0),
+	},
+	"jazda": {
+		"name": "Jazda",
+		"cost": 200,
+		"hp": 35,
+		"dmg": 12,
+		"speed": 7,
+		"color": Color(0.15, 0.3, 0.75),
+	},
+	"arkebuzerzy": {
+		"name": "Arkebuzerzy",
+		"cost": 260,
+		"hp": 30,
+		"dmg": 16,
+		"speed": 2,
+		"range": 3,
+		"color": Color(0.55, 0.4, 0.85),
+	},
+	"dragonia": {
+		"name": "Dragonia",
+		"cost": 300,
+		"hp": 45,
+		"dmg": 14,
+		"speed": 6,
+		"color": Color(0.1, 0.6, 0.55),
+	},
+	"husaria": {
+		"name": "Husaria",
+		"cost": 500,
+		"hp": 60,
+		"dmg": 22,
+		"speed": 6,
+		"color": Color(0.95, 0.85, 0.3),
+	},
+	"halabardnicy": {
+		"name": "Halabardnicy",
+		"cost": 140,
+		"hp": 60,
+		"dmg": 9,
+		"speed": 2,
+		"color": Color(0.35, 0.4, 0.6),
+	},
+	"kusznicy": {
+		"name": "Kusznicy",
+		"cost": 170,
+		"hp": 28,
+		"dmg": 13,
+		"speed": 2,
+		"range": 2,
+		"color": Color(0.45, 0.6, 0.8),
+	},
+	"lisowczycy": {
+		"name": "Lisowczycy",
+		"cost": 230,
+		"hp": 32,
+		"dmg": 13,
+		"speed": 7,
+		"color": Color(0.6, 0.3, 0.2),
+	},
+	# --- przyszłe frakcje (jeszcze niegrywalne) ---
+	"karolinska_piechota": {"name": "Piechota karolińska", "cost": 150, "hp": 45, "dmg": 11, "speed": 3, "color": Color(0.2, 0.35, 0.8)},
+	"rajtarzy": {"name": "Rajtarzy", "cost": 280, "hp": 42, "dmg": 15, "speed": 5, "color": Color(0.85, 0.75, 0.2)},
+	"janczarzy": {"name": "Janczarzy", "cost": 220, "hp": 38, "dmg": 15, "speed": 3, "range": 2, "color": Color(0.8, 0.2, 0.2)},
+	"sipahi": {"name": "Sipahi", "cost": 260, "hp": 36, "dmg": 14, "speed": 6, "color": Color(0.7, 0.15, 0.35)},
+	"strzelcy": {"name": "Strzelcy moskiewscy", "cost": 190, "hp": 34, "dmg": 13, "speed": 3, "range": 2, "color": Color(0.55, 0.12, 0.12)},
+	"bojarzy": {"name": "Dzieci bojarskie", "cost": 250, "hp": 40, "dmg": 13, "speed": 5, "color": Color(0.45, 0.3, 0.12)},
+	"kozacy": {"name": "Kozacy zaporoscy", "cost": 140, "hp": 30, "dmg": 11, "speed": 4, "range": 2, "color": Color(0.2, 0.45, 0.7)},
+	"molojcy": {"name": "Mołojcy konni", "cost": 230, "hp": 33, "dmg": 13, "speed": 7, "color": Color(0.85, 0.6, 0.15)},
+	"muszkieterowie": {"name": "Muszkieterowie", "cost": 180, "hp": 36, "dmg": 13, "speed": 3, "range": 2, "color": Color(0.15, 0.15, 0.2)},
+	"kirasjerzy": {"name": "Kirasjerzy", "cost": 300, "hp": 48, "dmg": 15, "speed": 5, "color": Color(0.5, 0.5, 0.55)},
+}
+const UNIT_ORDER := ["piechota", "lucznicy", "jazda", "halabardnicy", "kusznicy", "lisowczycy", "arkebuzerzy", "dragonia", "husaria"]
+
+## Frakcje: każda ma własną listę rekrutacji (kolejność = kolejność przycisków).
+const FACTIONS := {
+	"polska": {"name": "Rzeczpospolita", "playable": true, "region": "malopolska", "city": "Kraków",
+		"desc": "Husaria i lisowczycy — najsilniejsza jazda. Start: Kraków.", "army": ["piechota", "piechota", "lucznicy"],
+		"units": ["piechota", "lucznicy", "jazda", "halabardnicy", "kusznicy", "lisowczycy", "arkebuzerzy", "dragonia", "husaria"]},
+	"szwecja": {"name": "Szwecja", "playable": true, "region": "inflanty", "city": "Ryga",
+		"desc": "Karolińska piechota i rajtarzy. Start: Ryga.", "army": ["piechota", "piechota", "lucznicy"],
+		"units": ["piechota", "lucznicy", "karolinska_piechota", "rajtarzy"]},
+	"osmanowie": {"name": "Imperium Osmańskie", "playable": true, "region": "wolyn", "city": "Kamieniec",
+		"desc": "Janczarzy strzelają, sipahi są szybcy. Start: Kamieniec.", "army": ["piechota", "piechota", "jazda"],
+		"units": ["piechota", "jazda", "janczarzy", "sipahi"]},
+	"moskwa": {"name": "Carstwo Moskiewskie", "playable": true, "region": "litwa", "city": "Wilno",
+		"desc": "Strzelcy z bardyszami i dzieci bojarskie. Start: Wilno (rok 1655).", "army": ["piechota", "piechota", "strzelcy"],
+		"units": ["piechota", "lucznicy", "strzelcy", "bojarzy"]},
+	"kozacy": {"name": "Kozacy zaporoscy", "playable": true, "region": "ukraina", "city": "Kijów",
+		"desc": "Tanie wojsko strzelające z samopałów i szybcy mołojcy. Start: Kijów.", "army": ["kozacy", "kozacy", "piechota"],
+		"units": ["piechota", "kozacy", "jazda", "molojcy"]},
+	"brandenburgia": {"name": "Brandenburgia-Prusy", "playable": true, "region": "pomorze_zach", "city": "Szczecin",
+		"desc": "Zdyscyplinowani muszkieterowie i ciężcy kirasjerzy. Start: Szczecin.", "army": ["piechota", "muszkieterowie", "lucznicy"],
+		"units": ["piechota", "lucznicy", "muszkieterowie", "kirasjerzy"]},
+}
+var player_faction := "polska"
+
+func faction_units(f: String = "") -> Array:
+	var key := f if f != "" else player_faction
+	return FACTIONS.get(key, FACTIONS["polska"])["units"]
+
+## Budynki zamków: koszt = costs[aktualny_poziom]
+const BUILDING_DEFS := {
+	"ratusz": {"name": "Ratusz", "max": 2, "costs": [300, 600], "wood": [4, 6], "ore": [0, 4], "desc": "+50 zł/turę za poziom"},
+	"koszary": {"name": "Koszary", "max": 5, "costs": [150, 300, 500, 700, 1000], "wood": [0, 5, 5, 8, 10], "ore": [0, 0, 5, 8, 12], "desc": "1: piechota, 2: łucznicy+halabardnicy, 3: jazda+kusznicy+lisowczycy, 4: arkebuzerzy+dragonia, 5: husaria"},
+	"kuznia": {"name": "Kuźnia", "max": 1, "costs": [400], "wood": [0], "ore": [6], "desc": "+1 obrażeń całej armii w bitwie"},
+	"wieza": {"name": "Wieża magów", "max": 1, "costs": [350], "wood": [6], "ore": [0], "desc": "+5 max many, czary 2. poziomu"},
+	"targ": {"name": "Targ", "max": 3, "costs": [250, 450, 700], "wood": [5, 6, 8], "ore": [0, 3, 5], "desc": "+40 zł/turę za poziom"},
+	"stajnia": {"name": "Stajnia", "max": 2, "costs": [300, 600], "wood": [8, 10], "ore": [2, 6], "desc": "Jazda tańsza o 15% za poziom"},
+	"mur": {"name": "Mury", "max": 3, "costs": [300, 500, 800], "wood": [2, 4, 4], "ore": [6, 10, 14], "desc": "+5 HP jednostek w bitwie za poziom (najwyższy poziom w twoich zamkach)"},
+}
+const MARKET_INCOME := 40
+const CAVALRY_IDS := ["jazda", "dragonia", "husaria", "lisowczycy", "rajtarzy", "sipahi", "bojarzy", "molojcy", "kirasjerzy"]
+
+## Magia
+const MANA_START := 10
+const MANA_REGEN := 2
+const TOWER_MANA_BONUS := 5
+const SPELL_DEFS := {
+	"wizja": {"name": "Wizja", "cost": 2, "level": 1, "where": "map", "desc": "pokazuje najbliższą wrogą armię"},
+	"blyskawica": {"name": "Błyskawica", "cost": 4, "level": 1, "where": "battle", "desc": "15 obrażeń wrogowi"},
+	"leczenie": {"name": "Leczenie", "cost": 3, "level": 1, "where": "battle", "desc": "+20 HP sojusznikowi"},
+	"przyspieszenie": {"name": "Przyspieszenie", "cost": 3, "level": 2, "where": "battle", "desc": "+2 szybkości sojusznikowi (bitwa)"},
+}
+const SPELL_ORDER := ["wizja", "blyskawica", "leczenie", "przyspieszenie"]
+var hero_mana: int = MANA_START
+var hero_spells: Array[String] = ["wizja", "blyskawica", "leczenie"]
+var _magic_panel: ColorRect = null
+var _magic_title: Label = null
+var _magic_buttons: Dictionary = {}
+const TOWNHALL_INCOME := 50
+const UNIT_BARRACKS_LEVEL := {"piechota": 1, "lucznicy": 2, "jazda": 3, "arkebuzerzy": 4, "dragonia": 4, "husaria": 5, "halabardnicy": 2, "kusznicy": 3, "lisowczycy": 3, "karolinska_piechota": 2, "rajtarzy": 4, "janczarzy": 3, "sipahi": 4, "strzelcy": 3, "bojarzy": 4, "kozacy": 2, "molojcy": 3, "muszkieterowie": 3, "kirasjerzy": 4}
+var castle_buildings: Dictionary = {}
+var _city_region_id: String = ""
+
+@onready var world_map: Node2D = $WorldMap
+@onready var info_label: Label = $UI/InfoPanel/InfoLabel
+@onready var mp_label: Label = $UI/TopBar/HBox/MpLabel
+@onready var gold_label: Label = $UI/TopBar/HBox/GoldLabel
+@onready var hero_label: Label = $UI/TopBar/HBox/HeroLabel
+@onready var end_turn_button: Button = $UI/TopBar/HBox/EndTurnButton
+@onready var enter_city_button: Button = $UI/TopBar/HBox/EnterCityButton
+@onready var city_panel: Control = $UI/CityPanel
+@onready var battle_overlay: Control = $UI/BattleOverlay
+@onready var camera: Camera2D = $Camera2D
+
+var _fight_army_id: String = ""
+var _siege_region_id: String = ""
+var _siege_region_name: String = ""
+var gold: int = 400
+var wood: int = 10
+var ore: int = 10
+## Lista id jednostek w armii bohatera (sloty).
+var hero_army: Array[String] = ["piechota", "piechota", "lucznicy"]
+
+## Bohater
+var hero_name: String = "Hetman"
+var hero_level: int = 1
+var hero_xp: int = 0
+var hero_skills: Dictionary = {"atak": 0, "obrona": 0, "logistyka": 0, "magia": 0}
+var pending_skill_picks: int = 0
+var hero_artifacts: Array[String] = []
+var base_max_movement: int = 15
+var _skill_panel: ColorRect = null
+var _skill_title: Label = null
+var _skill_buttons: Dictionary = {}
+
+
+
+func _audio() -> Node:
+	return get_node_or_null("/root/AudioManager")
+
+
+func _audio_play(n: String) -> void:
+	var am := _audio()
+	if am:
+		am.play(n)
+
+
+func _audio_music() -> void:
+	var am := _audio()
+	if am:
+		am.play_music()
+
+
+func _audio_set_volume(v: float) -> void:
+	var am := _audio()
+	if am:
+		am.set_volume(v)
+
+
+func _audio_volume() -> float:
+	var am := _audio()
+	return float(am.volume) if am else 0.8
+
+func _ready() -> void:
+	world_map.hex_selected.connect(_on_hex_selected)
+	world_map.hero_moved.connect(_on_hero_moved)
+	world_map.artifact_picked.connect(_on_artifact_picked)
+	world_map.resource_picked.connect(_on_resource_picked)
+	world_map.turn_ended.connect(_on_turn_ended)
+	world_map.armies_moved.connect(_on_armies_moved)
+	world_map.city_entered.connect(_on_city_entered)
+	world_map.castle_presence.connect(_on_castle_presence)
+	world_map.army_encountered.connect(_on_army_encountered)
+	world_map.castle_siege.connect(_on_castle_siege)
+	end_turn_button.pressed.connect(_on_end_turn_pressed)
+	enter_city_button.pressed.connect(_on_enter_city_pressed)
+	city_panel.left_city.connect(_on_left_city)
+	city_panel.recruit_requested.connect(_on_recruit_requested)
+	city_panel.build_requested.connect(_on_build_requested)
+	battle_overlay.closed.connect(_on_battle_closed)
+	battle_overlay.field.spell_cast.connect(_on_battle_spell_cast)
+	_build_save_buttons()
+	enter_city_button.visible = false
+	base_max_movement = world_map.max_movement
+	_build_skill_panel()
+	_build_magic_ui()
+	_f7_setup()
+	_h4_setup()
+	_style_side_panel()
+	_nav_setup()
+	_apply_logistics()
+	var mid := HexMath.axial_to_pixel(world_map.hero_pos.x, world_map.hero_pos.y, world_map.hex_size)
+	camera.position = mid
+	_build_end_panel()
+	_refresh_hud()
+	info_label.text = "Złoto z zamku na koniec tury · koszary w zamku startowym · chorągiew = walka"
+	if world_map.is_on_castle():
+		enter_city_button.visible = true
+		enter_city_button.text = "Wejdź do miasta (E)"
+	_build_menu()
+	_migrate_old_save()
+	if _pending_load_slot > 0:
+		var slot := _pending_load_slot
+		_pending_load_slot = 0
+		_hide_menu()
+		load_game(slot)
+	elif _skip_menu:
+		_skip_menu = false
+		var fac := _pending_faction if _pending_faction != "" else "polska"
+		_pending_faction = ""
+		difficulty = _pending_diff
+		hotseat = _pending_hotseat and _pending_mission == 0 and _pending_scenario.is_empty()
+		scenario = _pending_scenario.duplicate(true)
+		_pending_scenario = {}
+		if not scenario.is_empty():
+			fac = str(scenario.get("player_faction", fac))
+			difficulty = int(scenario.get("difficulty", difficulty))
+		_apply_start_faction(fac)
+		_f7_after_start()
+		_scen_apply()
+		_hide_menu()
+		info_label.text = "Nowa gra: %s — start w %s." % [FACTIONS[player_faction]["name"], FACTIONS[player_faction]["city"]]
+		if _pending_mission > 0:
+			campaign_mission = _pending_mission
+			_pending_mission = 0
+			_setup_mission(campaign_mission)
+		if _pending_tutorial:
+			_pending_tutorial = false
+			_tut_start()
+		_audio_track("map")
+	else:
+		_show_main_menu()
+		_audio_track("menu")
+
+
+func get_buildings(region_id: String) -> Dictionary:
+	if not castle_buildings.has(region_id):
+		castle_buildings[region_id] = {"ratusz": 0, "koszary": 1, "kuznia": 0, "wieza": 0, "targ": 0, "stajnia": 0, "mur": 0}
+	var b: Dictionary = castle_buildings[region_id]
+	for k in ["targ", "stajnia", "mur"]:
+		if not b.has(k):
+			b[k] = 0
+	return b
+
+
+func _best_level(bid: String) -> int:
+	var best := 0
+	for rid in world_map.owned_region_ids:
+		best = maxi(best, int(get_buildings(rid).get(bid, 0)))
+	return best
+
+
+func unit_cost(unit_id: String, region_id: String = "") -> int:
+	var c: int = int(UNIT_CATALOG[unit_id]["cost"])
+	if unit_id in CAVALRY_IDS and region_id != "":
+		c = int(round(c * (1.0 - 0.15 * int(get_buildings(region_id).get("stajnia", 0)))))
+	return c
+
+
+func castle_income(region_id: String) -> int:
+	var b := get_buildings(region_id)
+	return INCOME_PER_CASTLE + int(b.get("ratusz", 0)) * TOWNHALL_INCOME + int(b.get("targ", 0)) * MARKET_INCOME
+
+
+func has_forge() -> bool:
+	for rid in world_map.owned_region_ids:
+		if int(get_buildings(rid).get("kuznia", 0)) > 0:
+			return true
+	return false
+
+
+func owned_income() -> int:
+	var bonus := 0
+	for rid in world_map.owned_region_ids:
+		bonus += int(get_buildings(rid).get("ratusz", 0)) * TOWNHALL_INCOME + int(get_buildings(rid).get("targ", 0)) * MARKET_INCOME
+	return world_map.owned_castle_count() * INCOME_PER_CASTLE + bonus
+
+
+func _refresh_city() -> void:
+	city_panel.res_wood = wood
+	city_panel.res_ore = ore
+	if _city_region_id == "":
+		return
+	city_panel.refresh_economy(gold, castle_income(_city_region_id), army_summary(), get_buildings(_city_region_id))
+
+
+func _on_build_requested(bid: String) -> void:
+	if _city_region_id == "" or not BUILDING_DEFS.has(bid):
+		return
+	var b := get_buildings(_city_region_id)
+	var def: Dictionary = BUILDING_DEFS[bid]
+	var lvl: int = int(b.get(bid, 0))
+	if lvl >= int(def["max"]):
+		return
+	var cost: int = int(def["costs"][lvl])
+	var cw: int = int(def["wood"][lvl])
+	var co: int = int(def["ore"][lvl])
+	if gold < cost:
+		info_label.text = "Za mało złota (trzeba %d, masz %d)." % [cost, gold]
+		return
+	if wood < cw:
+		info_label.text = "Za mało drewna (trzeba %d, masz %d)." % [cw, wood]
+		return
+	if ore < co:
+		info_label.text = "Za mało rudy (trzeba %d, masz %d)." % [co, ore]
+		return
+	gold -= cost
+	wood -= cw
+	ore -= co
+	b[bid] = lvl + 1
+	if bid == "wieza":
+		_sync_spells()
+		hero_mana += TOWER_MANA_BONUS
+	_refresh_hud()
+	_refresh_city()
+	info_label.text = "Zbudowano: %s poz. %d (−%d zł, −%d drewna, −%d rudy)" % [def["name"], lvl + 1, cost, cw, co]
+
+
+func army_summary() -> String:
+	if hero_army.is_empty():
+		return "(pusto — zrekrutuj w koszarach)"
+	var counts: Dictionary = {}
+	for id in hero_army:
+		counts[id] = int(counts.get(id, 0)) + 1
+	var parts: PackedStringArray = PackedStringArray()
+	for id in counts.keys():
+		var def: Dictionary = UNIT_CATALOG.get(id, {})
+		parts.append("%s×%d" % [str(def.get("name", id)), int(counts[id])])
+	return ", ".join(parts)
+
+
+func _refresh_hud() -> void:
+	_nav_refresh.call_deferred()
+	mp_label.text = "Punkty ruchu: %d/%d" % [world_map.movement_left, world_map.max_movement]
+	var mi: Dictionary = world_map.owned_mine_income()
+	gold_label.text = "Złoto: %d  (+%d/t)\nDrewno: %d  (+%d/t)\nRuda: %d  (+%d/t)\nMana: %d/%d" % [
+		gold, owned_income() + int(mi.get("gold", 0)) + artifact_fx("income"), wood, int(mi["wood"]), ore, int(mi["ore"]), hero_mana, max_mana()]
+	city_panel.res_wood = wood
+	city_panel.res_ore = ore
+	var xp_txt := "MAX" if hero_level >= HERO_MAX_LEVEL else "%d/%d" % [hero_xp, xp_to_next()]
+	hero_label.text = "%s%s\nPoziom %d · XP %s\nAtak %d · Obrona %d · Magia %d · Logistyka %d" % [
+		("Gracz %d · " % cur_player) if hotseat else "", hero_name, hero_level, xp_txt,
+		int(hero_skills["atak"]), int(hero_skills["obrona"]), int(hero_skills.get("magia", 0)), int(hero_skills["logistyka"])
+	]
+	_f7_refresh_portrait()
+	hero_label.tooltip_text = "Artefakty: " + artifacts_summary()
+	var al := get_node_or_null("UI/TopBar/HBox/ArmyLabel") as Label
+	if al:
+		al.text = "Armia (%d): %s" % [hero_army.size(), army_summary()]
+	var tl := get_node_or_null("UI/TopBar/HBox/ArtLabel") as Label
+	if tl:
+		_refresh_artifact_icons()
+	var ol := get_node_or_null("UI/TopBar/HBox/ObjLabel") as Label
+	if ol:
+		ol.text = "Zamki: %d/%d\nCel: %s" % [world_map.owned_castle_count(), VICTORY_CASTLES, objective_text()]
+
+
+func xp_to_next() -> int:
+	return 100 * hero_level
+
+
+## Dodaje XP, zwraca liczbę zdobytych poziomów.
+func add_hero_xp(amount: int) -> int:
+	if hero_level >= HERO_MAX_LEVEL:
+		return 0
+	hero_xp += amount
+	var gained := 0
+	while hero_level < HERO_MAX_LEVEL and hero_xp >= xp_to_next():
+		hero_xp -= xp_to_next()
+		hero_level += 1
+		gained += 1
+	if hero_level >= HERO_MAX_LEVEL:
+		hero_xp = 0
+	return gained
+
+
+func artifact_count(aid: String) -> int:
+	return hero_artifacts.count(aid)
+
+
+## Suma efektu (dmg/hp/mp/sight/mana/regen/income) z noszonych artefaktów.
+func artifact_fx(key: String) -> int:
+	var t := 0
+	for aid in hero_artifacts:
+		t += int(world_map.ARTIFACT_DEFS.get(aid, {}).get("fx", {}).get(key, 0))
+	return t
+
+
+func artifact_dmg_bonus() -> int:
+	return artifact_fx("dmg")
+
+
+func artifact_hp_bonus() -> int:
+	return artifact_fx("hp")
+
+
+var _art_grid: GridContainer = null
+func _refresh_artifact_icons() -> void:
+	var tl := get_node_or_null("UI/TopBar/HBox/ArtLabel") as Label
+	if tl == null:
+		return
+	if _art_grid == null:
+		_art_grid = GridContainer.new()
+		_art_grid.columns = 5
+		_art_grid.add_theme_constant_override("h_separation", 4)
+		_art_grid.add_theme_constant_override("v_separation", 4)
+		tl.get_parent().add_child(_art_grid)
+		tl.get_parent().move_child(_art_grid, tl.get_index() + 1)
+	for ch in _art_grid.get_children():
+		ch.queue_free()
+	for aid in hero_artifacts:
+		var def: Dictionary = world_map.ARTIFACT_DEFS.get(aid, {})
+		var tr := TextureRect.new()
+		tr.texture = world_map.artifact_texture(aid)
+		tr.custom_minimum_size = Vector2(40, 40)
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.tooltip_text = "%s\n%s" % [str(def.get("name", aid)), str(def.get("desc", ""))]
+		tr.mouse_filter = Control.MOUSE_FILTER_STOP
+		_art_grid.add_child(tr)
+	var fx := PackedStringArray()
+	if artifact_fx("dmg") > 0: fx.append("Atak +%d" % artifact_fx("dmg"))
+	if artifact_fx("hp") > 0: fx.append("HP +%d" % artifact_fx("hp"))
+	if artifact_fx("mp") > 0: fx.append("PR +%d" % artifact_fx("mp"))
+	if artifact_fx("sight") > 0: fx.append("Wzrok +%d" % artifact_fx("sight"))
+	if artifact_fx("mana") > 0: fx.append("Mana +%d" % artifact_fx("mana"))
+	if artifact_fx("income") > 0: fx.append("+%d zł/t" % artifact_fx("income"))
+	tl.text = "Artefakty: " + ("brak" if hero_artifacts.is_empty() else ", ".join(fx))
+	world_map.sight_bonus = artifact_fx("sight")
+
+
+func artifacts_summary() -> String:
+	if hero_artifacts.is_empty():
+		return "brak"
+	var parts := PackedStringArray()
+	for aid in hero_artifacts:
+		parts.append(str(world_map.ARTIFACT_DEFS.get(aid, {}).get("name", aid)))
+	return ", ".join(parts)
+
+
+func _on_resource_picked(res_type: String, kind: String, amount: int) -> void:
+	_audio_play("pickup")
+	var nm: String = str({"wood": "drewna", "ore": "rudy", "gold": "zł"}.get(res_type, res_type))
+	if kind == "pile":
+		if res_type == "wood":
+			wood += amount
+		else:
+			ore += amount
+		info_label.text = "Zebrano +%d %s." % [amount, nm]
+	else:
+		var mn := kind.substr(5) if kind.begins_with("mine:") else ("tartak" if res_type == "wood" else "kopalnię")
+		info_label.text = "Przejęto %s: +%d %s / turę." % [mn, amount, nm]
+	_refresh_hud()
+
+
+func _on_artifact_picked(aid: String) -> void:
+	_audio_play("pickup")
+	var def: Dictionary = world_map.ARTIFACT_DEFS.get(aid, {})
+	var fx: Dictionary = def.get("fx", {})
+	if fx.has("gold_once"):
+		gold += int(fx["gold_once"])
+	else:
+		hero_artifacts.append(aid)
+		if fx.has("mp"):
+			_apply_logistics()
+		if fx.has("mana"):
+			hero_mana = mini(max_mana(), hero_mana + int(fx["mana"]))
+		world_map.sight_bonus = artifact_fx("sight")
+		world_map._recompute_reach()
+	_refresh_hud()
+	info_label.text = "Znaleziono: %s (%s)" % [str(def.get("name", aid)), str(def.get("desc", ""))]
+
+
+func _apply_logistics() -> void:
+	var new_max: int = base_max_movement + int(hero_skills["logistyka"]) + artifact_fx("mp")
+	var diff: int = new_max - world_map.max_movement
+	world_map.max_movement = new_max
+	if diff > 0:
+		world_map.movement_left += diff
+	if world_map.has_method("_recompute_reach"):
+		world_map._recompute_reach()
+	world_map.queue_redraw()
+
+
+func _build_skill_panel() -> void:
+	_skill_panel = ColorRect.new()
+	_skill_panel.color = Color(0.05, 0.06, 0.08, 0.72)
+	_skill_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_skill_panel.visible = false
+	$UI.add_child(_skill_panel)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_skill_panel.add_child(center)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(420, 160)
+	center.add_child(panel)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 12)
+	panel.add_child(vbox)
+	_skill_title = Label.new()
+	_skill_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_skill_title.add_theme_font_size_override("font_size", 20)
+	vbox.add_child(_skill_title)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 10)
+	vbox.add_child(row)
+	for sid in ["atak", "obrona", "logistyka", "magia"]:
+		var b := Button.new()
+		b.pressed.connect(_on_skill_chosen.bind(sid))
+		row.add_child(b)
+		_skill_buttons[sid] = b
+
+
+func _show_skill_panel() -> void:
+	_audio_play("levelup")
+	var available := false
+	for sid in _skill_buttons.keys():
+		var lvl: int = int(hero_skills[sid])
+		var b: Button = _skill_buttons[sid]
+		b.text = "%s (%d/%d)" % [str(SKILL_NAMES[sid]), lvl, SKILL_MAX]
+		b.disabled = lvl >= SKILL_MAX
+		if not b.disabled:
+			available = true
+	if not available:
+		pending_skill_picks = 0
+		_skill_panel.visible = false
+		world_map.set_process_unhandled_input(true)
+		return
+	_skill_title.text = "%s awansuje na poziom %d! Wybierz umiejętność:" % [hero_name, hero_level]
+	_skill_panel.visible = true
+	world_map.set_process_unhandled_input(false)
+
+
+func _on_skill_chosen(sid: String) -> void:
+	if int(hero_skills[sid]) >= SKILL_MAX:
+		return
+	hero_skills[sid] = int(hero_skills[sid]) + 1
+	if sid == "logistyka":
+		_apply_logistics()
+	pending_skill_picks -= 1
+	info_label.text = "%s: %s → %d" % [hero_name, str(SKILL_NAMES[sid]), int(hero_skills[sid])]
+	_refresh_hud()
+	if pending_skill_picks > 0:
+		_show_skill_panel()
+	else:
+		_skill_panel.visible = false
+		world_map.set_process_unhandled_input(true)
+
+
+func _on_hex_selected(q: int, r: int, region_id: String, region_name: String, terrain: String) -> void:
+	if Vector2i(q, r) == world_map.hero_pos and not _ui_busy():
+		_show_hero_panel()
+	var extra := ""
+	var army: Dictionary = world_map.army_at(Vector2i(q, r))
+	if not army.is_empty():
+		extra = "  ·  ARMIA: %s" % str(army.get("name", ""))
+	var art: String = world_map.artifact_at(Vector2i(q, r))
+	if art != "":
+		var ad: Dictionary = world_map.ARTIFACT_DEFS.get(art, {})
+		extra += "  ·  ARTEFAKT: %s (%s)" % [str(ad.get("name", art)), str(ad.get("desc", ""))]
+	var port: Dictionary = world_map.port_at(Vector2i(q, r))
+	if not port.is_empty():
+		extra += "  ·  %s — wejdź i kliknij inny port, by popłynąć (2 PR + 1 PR / 4 pola wody)" % str(port.get("name", "Port"))
+	info_label.text = "%s  ·  %s  ·  hex (%d, %d)%s" % [region_name, terrain, q, r, extra]
+
+
+func _on_hero_moved(q: int, r: int, mp_left: int) -> void:
+	_audio_play("move")
+	_refresh_hud()
+	info_label.text = "Bohater → (%d, %d)  ·  PR: %d" % [q, r, mp_left]
+
+
+func _on_armies_moved(moved_count: int) -> void:
+	if battle_overlay.visible:
+		return
+	info_label.text = "Wrogie armie wykonały ruch (%d)." % moved_count
+
+
+func _on_turn_ended(mp: int) -> void:
+	var income := owned_income()
+	var mi: Dictionary = world_map.owned_mine_income()
+	income += int(mi.get("gold", 0)) + artifact_fx("income")
+	gold += income
+	stats["turns"] = int(stats["turns"]) + 1
+	stats["gold_earned"] = int(stats["gold_earned"]) + income
+	if gold >= 1000:
+		_unlock("bogacz")
+	ore += int(mi["ore"])
+	hero_mana = mini(max_mana(), hero_mana + MANA_REGEN + int(hero_skills.get("magia", 0)) + artifact_fx("regen"))
+	gold += _f7_turn_tick()
+	for h in my_heroes:
+		h["mp"] = world_map.max_movement
+	_refresh_hud()
+	_refresh_city()
+	info_label.text = "Nowa tura · +%d zł, +%d drewna, +%d rudy · PR: %d" % [income, int(mi["wood"]), int(mi["ore"]), mp]
+	var rmsg := "" if hotseat else _rival_turn()
+	if rmsg != "":
+		info_label.text += " · " + rmsg
+	_check_game_end()
+	_autosave.call_deferred()
+
+
+func _on_end_turn_pressed() -> void:
+	if world_map.is_animating:
+		return
+	if hotseat:
+		_hs_swap()
+		world_map.end_turn()
+		_hs_handoff()
+		return
+	_rival_plan()
+	world_map.end_turn()
+
+
+func _on_enter_city_pressed() -> void:
+	world_map.try_enter_city()
+
+
+func _on_battle_pressed() -> void:
+	_fight_army_id = ""
+	_siege_region_id = ""
+	_open_battle("Walka testowa")
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+		if _menu_root.visible:
+			if _in_game:
+				_hide_menu()
+			elif _slot_box.visible:
+				_show_main_menu()
+		elif not _ui_busy():
+			_show_pause_menu()
+		get_viewport().set_input_as_handled()
+		return
+	if _menu_root.visible:
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_M:
+		toggle_magic_panel()
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F5:
+		_open_slots("save")
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F9:
+		_open_slots("load")
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
+		if not _ui_busy():
+			_nav_city_hotkey()
+			get_viewport().set_input_as_handled()
+
+
+func _on_army_encountered(army_id: String, army_name: String) -> void:
+	if army_id.begins_with("my_hero_"):
+		world_map.retreat_from_battle()
+		_h4_meet(army_id)
+		return
+	_siege_region_id = ""
+	_fight_army_id = army_id
+	if army_id == RIVAL_ID:
+		_f7_break_treaty()
+		_open_battle("%s (%s)" % [army_name, FACTIONS[rival_faction]["name"]], _rival_battle_units(rival_army))
+		return
+	if army_id.begins_with("bestia"):
+		_open_battle(army_name, _beast_battle_units(army_id))
+		return
+	_open_battle(army_name, _neutral_battle_units(world_map.get_army_units(army_id)))
+
+
+## Odtwarza ocalałe jednostki zwykłej armii (pusta lista = pełny skład domyślny).
+func _neutral_battle_units(ids: Array) -> Array:
+	var out: Array = []
+	var defs := {
+		"enemy_p": {"name": "Piechota wroga", "pos": Vector2i(9, 3), "hp": 35, "dmg": 7, "speed": 3, "color": Color(0.75, 0.2, 0.15)},
+		"enemy_l": {"name": "Łucznicy wroga", "pos": Vector2i(9, 5), "hp": 22, "dmg": 9, "speed": 3, "color": Color(0.9, 0.35, 0.25)},
+		"enemy_j": {"name": "Jazda wroga", "pos": Vector2i(8, 4), "hp": 32, "dmg": 11, "speed": 5, "color": Color(0.6, 0.1, 0.1)},
+	}
+	for id in ids:
+		if defs.has(str(id)):
+			var d: Dictionary = defs[str(id)].duplicate()
+			d["unit_id"] = str(id)
+			out.append(d)
+	return out
+
+
+func _open_battle(title: String = "Walka", enemy_units: Array = []) -> void:
+	if hero_army.is_empty():
+		info_label.text = "Brak armii — zrekrutuj jednostki w koszarach (zamek startowy)."
+		return
+	_audio_play("battle_start")
+	_audio_play("sfx_hurrah")
+	_audio_track("battle")
+	battle_overlay.field.spell_power = 5 * int(hero_skills.get("magia", 0))
+	city_panel.visible = false
+	world_map.set_process_unhandled_input(false)
+	battle_overlay.field.mana = hero_mana
+	battle_overlay.open_battle(title, _army_as_battle_units(), _siege_region_id != "", enemy_units)
+	info_label.text = "Starcie: %s" % title
+
+
+func _army_as_battle_units() -> Array:
+	var out: Array = []
+	var slots := [
+		Vector2i(1, 2), Vector2i(1, 3), Vector2i(1, 4), Vector2i(1, 5),
+		Vector2i(2, 3), Vector2i(2, 4), Vector2i(2, 5),
+	]
+	for i in mini(hero_army.size(), slots.size()):
+		var id: String = hero_army[i]
+		var def: Dictionary = UNIT_CATALOG.get(id, {})
+		if def.is_empty():
+			continue
+		out.append({
+			"name": str(def["name"]),
+			"unit_id": id,
+			"hp": int(def["hp"]) + 5 * int(hero_skills["obrona"]) + artifact_hp_bonus() + 5 * _best_level("mur"),
+			"dmg": int(def["dmg"]) + int(hero_skills["atak"]) + (1 if has_forge() else 0) + artifact_dmg_bonus(),
+			"speed": int(def["speed"]),
+			"range": int(def.get("range", 1)),
+			"color": def["color"],
+			"pos": slots[i],
+		})
+	return out
+
+
+func _on_battle_closed(player_won: bool, survivors: Array = [], enemy_survivors: Array = []) -> void:
+	_audio_play("victory" if player_won else "defeat")
+	_audio_track("map")
+	_record_battle(player_won, survivors)
+	_magic_panel.visible = false
+	world_map.set_process_unhandled_input(true)
+	if survivors is Array and not survivors.is_empty():
+		hero_army.clear()
+		for s in survivors:
+			hero_army.append(str(s))
+	elif not player_won:
+		hero_army.clear()
+	var xp_gain := 0
+	if player_won:
+		if _siege_region_id != "":
+			xp_gain = XP_SIEGE
+		elif _fight_army_id != "":
+			xp_gain = XP_FIELD
+		else:
+			xp_gain = XP_TEST
+	var levels := add_hero_xp(xp_gain)
+	_refresh_hud()
+	_refresh_city()
+	if _siege_region_id != "":
+		if player_won:
+			if _siege_region_id in world_map.rival_region_ids:
+				rival_garrison.clear()
+			world_map.capture_castle(_siege_region_id)
+			stats["castles"] = int(stats["castles"]) + 1
+			_unlock("oblezyciel")
+			gold += 150
+			_refresh_hud()
+			info_label.text = "Zamek zdobyty: %s · +150 zł · dochód teraz +%d/t" % [
+				_siege_region_name, owned_income()
+			]
+		else:
+			if _siege_region_id in world_map.rival_region_ids:
+				rival_garrison.clear()
+				for u in enemy_survivors:
+					rival_garrison.append(str(u))
+			world_map.retreat_from_battle()
+			info_label.text = "Oblężenie nieudane — odwrót spod %s." % _siege_region_name
+		_siege_region_id = ""
+		_siege_region_name = ""
+	elif _fight_army_id != "":
+		if player_won:
+			if _fight_army_id == RIVAL_ID:
+				rival_army.clear()
+				stats["rival_beaten"] = int(stats["rival_beaten"]) + 1
+			world_map.remove_army(_fight_army_id)
+			world_map.collect_resource_here()
+			gold += 50
+			info_label.text = "Wygrana — armia rozbita · +50 zł · skład: %s" % army_summary()
+			if _fight_army_id.begins_with("bestia"):
+				info_label.text = "Bestie pokonane! " + _beast_loot()
+		else:
+			if _fight_army_id == RIVAL_ID:
+				rival_army.clear()
+				for u in enemy_survivors:
+					rival_army.append(str(u))
+			else:
+				world_map.set_army_units(_fight_army_id, enemy_survivors)
+			world_map.retreat_from_battle()
+			info_label.text = "Przegrana — odwrót. Zrekrutuj wojsko w swoim zamku."
+		_fight_army_id = ""
+	else:
+		info_label.text = ("Wygrana (test). " if player_won else "Przegrana (test). ") + "Armia: " + army_summary()
+	if xp_gain > 0:
+		info_label.text += " · +%d XP" % xp_gain
+		if levels > 0:
+			info_label.text += " · AWANS na poz. %d!" % hero_level
+			pending_skill_picks += levels
+			_show_skill_panel()
+	_h4_after_battle()
+	_check_game_end()
+
+
+
+func _on_castle_siege(region_id: String, region_name: String, capital: String) -> void:
+	if hero_army.is_empty():
+		info_label.text = "Za słaba armia na oblężenie %s — rekrutuj w swoim zamku." % capital
+		return
+	_fight_army_id = ""
+	_siege_region_id = region_id
+	_siege_region_name = "%s (%s)" % [capital, region_name]
+	if region_id in world_map.rival_region_ids:
+		_f7_break_treaty()
+		var g: Array = rival_garrison.duplicate()
+		if g.is_empty():
+			g = ["piechota", "lucznicy"]
+		_open_battle("Oblężenie: %s (rywal)" % capital, _rival_battle_units(g, true))
+		return
+	_open_battle("Oblężenie: %s" % capital)
+
+
+func _on_city_entered(region_id: String, region_name: String, capital: String, owned_by_player: bool) -> void:
+	_city_region_id = region_id
+	var owned_b: Dictionary = get_buildings(region_id) if owned_by_player else {}
+	city_panel.res_wood = wood
+	city_panel.res_ore = ore
+	city_panel.open_city(
+		region_id, region_name, capital, owned_by_player,
+		gold, castle_income(region_id), army_summary(), owned_b, BUILDING_DEFS
+	)
+	world_map.set_process_unhandled_input(false)
+	info_label.text = "W mieście: %s (%s)" % [capital, region_name]
+
+
+func _on_left_city() -> void:
+	_city_region_id = ""
+	world_map.set_process_unhandled_input(true)
+	info_label.text = "Opuszczono miasto"
+
+
+func _on_castle_presence(on_castle: bool, region_name: String) -> void:
+	enter_city_button.visible = on_castle
+	if on_castle:
+		enter_city_button.text = "Wejdź: %s (E)" % region_name
+
+
+func _on_recruit_requested(unit_id: String) -> void:
+	if not UNIT_CATALOG.has(unit_id):
+		return
+	if hero_army.size() >= MAX_ARMY_SLOTS:
+		info_label.text = "Armia pełna (%d slotów)." % MAX_ARMY_SLOTS
+		return
+	var need: int = int(UNIT_BARRACKS_LEVEL.get(unit_id, 1))
+	if _city_region_id == "" or int(get_buildings(_city_region_id).get("koszary", 0)) < need:
+		info_label.text = "Wymaga Koszar poz. %d." % need
+		return
+	var def: Dictionary = UNIT_CATALOG[unit_id]
+	var cost: int = unit_cost(unit_id, _city_region_id)
+	if gold < cost:
+		info_label.text = "Za mało złota (trzeba %d, masz %d)." % [cost, gold]
+		return
+	gold -= cost
+	hero_army.append(unit_id)
+	stats["recruited"] = int(stats["recruited"]) + 1
+	if unit_id == "husaria":
+		_unlock("husaria")
+	_refresh_hud()
+	_refresh_city()
+	info_label.text = "Zrekrutowano: %s (−%d zł)" % [str(def["name"]), cost]
+
+
+# --- Menu + zapis / wczytywanie (3 sloty) ---
+const SLOT_COUNT := 3
+const SAVE_VERSION := 1
+const OLD_SAVE_PATH := "user://savegame.json"
+
+## Przetrwają reload_current_scene() (nowa gra / wczytanie z menu).
+static var _skip_menu: bool = false
+static var _pending_load_slot: int = 0
+static var _pending_faction: String = ""
+var _faction_box: VBoxContainer = null
+
+var _in_game: bool = false
+var _menu_root: ColorRect = null
+var _menu_title: Label = null
+var _main_box: VBoxContainer = null
+var _slot_box: VBoxContainer = null
+var _slot_title: Label = null
+var _slot_buttons: Array[Button] = []
+var _slot_mode: String = "load"
+var _btn_resume: Button = null
+var _btn_save: Button = null
+
+
+const AUTO_SLOT := 99
+
+
+static func slot_path(slot: int) -> String:
+	if slot == AUTO_SLOT:
+		return "user://save_autosave.json"
+	if slot == AUTO_SLOT - 1:
+		return "user://save_autosave.json.bak"
+	return "user://save_slot_%d.json" % slot
+
+
+func _build_save_buttons() -> void:
+	var hbox: BoxContainer = $UI/TopBar/HBox
+	var sb := Button.new()
+	sb.text = "Zapisz (F5)"
+	sb.focus_mode = Control.FOCUS_NONE
+	sb.pressed.connect(_open_slots.bind("save"))
+	hbox.add_child(sb)
+	var lb := Button.new()
+	lb.text = "Wczytaj (F9)"
+	lb.focus_mode = Control.FOCUS_NONE
+	lb.pressed.connect(_open_slots.bind("load"))
+	hbox.add_child(lb)
+	var mb := Button.new()
+	mb.text = "Menu (Esc)"
+	mb.focus_mode = Control.FOCUS_NONE
+	mb.pressed.connect(func(): if not _ui_busy(): _show_pause_menu())
+	hbox.add_child(mb)
+
+
+func _mk_button(parent: Node, text: String, cb: Callable) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(320, 40)
+	_style_menu_button(b)
+	b.pressed.connect(func(): _audio_play("click"))
+	b.pressed.connect(cb)
+	parent.add_child(b)
+	return b
+
+
+func _build_menu() -> void:
+	_menu_root = ColorRect.new()
+	_menu_root.color = Color(0.06, 0.05, 0.07, 0.92)
+	_menu_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_menu_root.mouse_filter = Control.MOUSE_FILTER_STOP
+	$UI.add_child(_menu_root)
+	_menu_root.color = Color(0, 0, 0, 1)
+	var bg := TextureRect.new()
+	bg.texture = load("res://assets/ui/menu_bg.png")
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_menu_root.add_child(bg)
+	var shade := ColorRect.new()
+	shade.color = Color(0, 0, 0, 0.25)
+	shade.set_anchors_preset(Control.PRESET_FULL_RECT)
+	shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_menu_root.add_child(shade)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_menu_root.add_child(center)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(420, 300)
+	panel.add_theme_stylebox_override("panel", _tex_sb(UI_WOOD, 14))
+	center.add_child(panel)
+	var parch := PanelContainer.new()
+	parch.add_theme_stylebox_override("panel", _parch_sb(22))
+	panel.add_child(parch)
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 14)
+	parch.add_child(outer)
+	_menu_title = Label.new()
+	_menu_title.text = "Rzeczpospolita — Hex"
+	_menu_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_menu_title.add_theme_font_size_override("font_size", 32)
+	_menu_title.add_theme_color_override("font_color", Color(0.48, 0.08, 0.06))
+	_menu_title.add_theme_color_override("font_outline_color", Color(0.95, 0.85, 0.55))
+	_menu_title.add_theme_constant_override("outline_size", 3)
+	outer.add_child(_menu_title)
+	_main_box = VBoxContainer.new()
+	_main_box.add_theme_constant_override("separation", 8)
+	outer.add_child(_main_box)
+	_btn_resume = _mk_button(_main_box, "Wznów", _hide_menu)
+	_mk_button(_main_box, "Nowa gra", _new_game)
+	_mk_button(_main_box, "Kampania: Potop szwedzki", _show_campaign_menu)
+	_mk_button(_main_box, "Edytor scenariusza", _show_editor)
+	_mk_button(_main_box, "Samouczek", _start_tutorial)
+	_mk_button(_main_box, "Osiągnięcia", _show_achievements)
+	_mk_button(_main_box, "Ranking / wyniki", _show_ranking)
+	_mk_button(_main_box, "Wczytaj", _open_slots.bind("load"))
+	_btn_save = _mk_button(_main_box, "Zapisz", _open_slots.bind("save"))
+	_mk_button(_main_box, "Wyjdź", func(): get_tree().quit())
+	var vol_row := HBoxContainer.new()
+	_main_box.add_child(vol_row)
+	var vol_lbl := Label.new()
+	vol_lbl.custom_minimum_size = Vector2(130, 0)
+	vol_lbl.add_theme_color_override("font_color", PARCH_TEXT)
+	vol_row.add_child(vol_lbl)
+	var vol := HSlider.new()
+	vol.min_value = 0
+	vol.max_value = 100
+	vol.step = 5
+	vol.custom_minimum_size = Vector2(190, 0)
+	vol.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	vol.value = round(_audio_volume() * 100.0)
+	vol_lbl.text = "Głośność: %d" % int(vol.value)
+	vol.value_changed.connect(func(v: float):
+		_audio_set_volume(v / 100.0)
+		vol_lbl.text = "Głośność: %d" % int(v))
+	vol.drag_ended.connect(func(_c: bool): _audio_play("click"))
+	vol_row.add_child(vol)
+	_slot_box = VBoxContainer.new()
+	_slot_box.add_theme_constant_override("separation", 8)
+	outer.add_child(_slot_box)
+	_slot_title = Label.new()
+	_slot_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_slot_title.add_theme_color_override("font_color", PARCH_TEXT)
+	_slot_box.add_child(_slot_title)
+	for i in range(1, SLOT_COUNT + 1):
+		_slot_buttons.append(_mk_button(_slot_box, "", _on_slot_pressed.bind(i)))
+	_auto_btn = _mk_button(_slot_box, "", _on_slot_pressed.bind(AUTO_SLOT))
+	_auto_bak_btn = _mk_button(_slot_box, "", _on_auto_bak_pressed)
+	_mk_button(_slot_box, "Wstecz", _on_slots_back)
+
+
+func _show_main_menu() -> void:
+	_menu_title.text = "Rzeczpospolita — Hex"
+	_btn_resume.visible = _in_game
+	_btn_save.visible = _in_game
+	_main_box.visible = true
+	_slot_box.visible = false
+	if _faction_box != null:
+		_faction_box.visible = false
+	if _campaign_box != null:
+		_campaign_box.visible = false
+	if _editor_box != null:
+		_editor_box.visible = false
+	_menu_root.visible = true
+	world_map.set_process_unhandled_input(false)
+
+
+func _show_pause_menu() -> void:
+	_show_main_menu()
+	_menu_title.text = "Pauza"
+
+
+func _hide_menu() -> void:
+	_menu_root.visible = false
+	_in_game = true
+	if not _ui_busy():
+		world_map.set_process_unhandled_input(true)
+
+
+func _on_slots_back() -> void:
+	if _in_game and _slot_from_hud:
+		_hide_menu()
+	elif _in_game:
+		_show_pause_menu()
+	else:
+		_show_main_menu()
+
+
+var _slot_from_hud: bool = false
+
+
+func _open_slots(mode: String) -> void:
+	if _in_game and _ui_busy():
+		info_label.text = "Nie można teraz — zamknij bitwę, miasto lub wybór umiejętności."
+		return
+	if mode == "save" and not _in_game:
+		return
+	_slot_from_hud = not _menu_root.visible
+	_slot_mode = mode
+	_slot_title.text = "Zapisz w slocie:" if mode == "save" else "Wczytaj ze slotu:"
+	for i in range(1, SLOT_COUNT + 1):
+		var info := _slot_info(i)
+		var b := _slot_buttons[i - 1]
+		b.text = "Slot %d: %s" % [i, info if info != "" else "pusty"]
+		b.disabled = mode == "load" and info == ""
+	var ai := _slot_info(AUTO_SLOT)
+	_auto_btn.visible = mode == "load"
+	_auto_btn.text = "Autozapis: %s" % (ai if ai != "" else "brak")
+	_auto_btn.disabled = ai == ""
+	_auto_bak_btn.visible = mode == "load" and FileAccess.file_exists(slot_path(AUTO_SLOT) + ".bak")
+	_auto_bak_btn.text = "Autozapis (poprzednia tura)"
+	_main_box.visible = false
+	_slot_box.visible = true
+	_menu_root.visible = true
+	world_map.set_process_unhandled_input(false)
+
+
+func _read_slot(slot: int) -> Dictionary:
+	var p := slot_path(slot)
+	if not FileAccess.file_exists(p):
+		return {}
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(p))
+	if typeof(parsed) != TYPE_DICTIONARY or not parsed.has("world_map"):
+		return {}
+	return parsed
+
+
+func _slot_info(slot: int) -> String:
+	var d := _read_slot(slot)
+	if d.is_empty():
+		return ""
+	return "Poz. %d · %d zł · %s" % [int(d.get("hero_level", 1)), int(d.get("gold", 0)), str(d.get("saved_at", "?"))]
+
+
+var _auto_btn: Button = null
+var _auto_bak_btn: Button = null
+
+
+## Autozapis po każdej turze; poprzedni trafia do .bak (lekka kopia).
+func _autosave() -> void:
+	if _ui_busy() or game_won or game_lost:
+		return
+	var p := slot_path(AUTO_SLOT)
+	if FileAccess.file_exists(p):
+		var gp := ProjectSettings.globalize_path(p)
+		DirAccess.copy_absolute(gp, gp + ".bak")
+	var keep := info_label.text
+	save_game(AUTO_SLOT)
+	info_label.text = keep + " · autozapis"
+
+
+func _on_auto_bak_pressed() -> void:
+	_on_slot_pressed(AUTO_SLOT - 1)
+
+
+func _on_slot_pressed(slot: int) -> void:
+	if _slot_mode == "save":
+		save_game(slot)
+		_hide_menu()
+	elif _in_game:
+		_hide_menu()
+		load_game(slot)
+	else:
+		_hide_menu()
+		load_game(slot)
+
+
+func _new_game() -> void:
+	_show_faction_picker()
+
+
+func playable_factions() -> Array:
+	var out: Array = []
+	for k in FACTIONS.keys():
+		if bool(FACTIONS[k].get("playable", false)):
+			out.append(k)
+	return out
+
+
+func _show_faction_picker() -> void:
+	if _faction_box == null:
+		_faction_box = VBoxContainer.new()
+		_faction_box.add_theme_constant_override("separation", 8)
+		_main_box.get_parent().add_child(_faction_box)
+		var t := Label.new()
+		t.text = "Wybierz frakcję"
+		t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		t.add_theme_font_size_override("font_size", 22)
+		t.add_theme_color_override("font_color", Color(0.48, 0.08, 0.06))
+		_faction_box.add_child(t)
+		_f7_picker_extras(_faction_box)
+		for k in playable_factions():
+			var f: Dictionary = FACTIONS[k]
+			var b := _mk_button(_faction_box, str(f["name"]), _start_with_faction.bind(k))
+			b.tooltip_text = str(f.get("desc", ""))
+			var d := Label.new()
+			d.text = str(f.get("desc", ""))
+			d.add_theme_font_size_override("font_size", 13)
+			d.add_theme_color_override("font_color", PARCH_TEXT)
+			d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			d.custom_minimum_size = Vector2(320, 0)
+			d.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			_faction_box.add_child(d)
+		_mk_button(_faction_box, "Wstecz", _hide_faction_picker)
+	_main_box.visible = false
+	_faction_box.visible = true
+
+
+func _hide_faction_picker() -> void:
+	if _faction_box != null:
+		_faction_box.visible = false
+	_main_box.visible = true
+
+
+func _start_with_faction(fac: String) -> void:
+	_pending_faction = fac
+	_skip_menu = true
+	get_tree().reload_current_scene()
+
+
+## Ustawia frakcję gracza, zamek startowy, pozycję bohatera i armię.
+func _apply_start_faction(fac: String) -> void:
+	if not FACTIONS.has(fac):
+		fac = "polska"
+	player_faction = fac
+	var f: Dictionary = FACTIONS[fac]
+	var rid := str(f.get("region", "malopolska"))
+	if str(scenario.get("start_region", "")) != "":
+		rid = str(scenario["start_region"])
+	var reg: Dictionary = world_map._region_by_id.get(rid, {})
+	if not reg.is_empty():
+		world_map.owned_region_ids.clear()
+		world_map.owned_region_ids.append(rid)
+		world_map.hero_pos = Vector2i(int(reg.get("capital_q", 16)), int(reg.get("capital_r", 18)))
+		world_map._pre_battle_pos = world_map.hero_pos
+		world_map._armies.erase(world_map.hero_pos)
+	hero_army.clear()
+	for u in f.get("army", ["piechota", "piechota", "lucznicy"]):
+		hero_army.append(str(u))
+	castle_buildings.clear()
+	_init_rival()
+	world_map._ensure_corridors()
+	world_map._recompute_reach()
+	camera.position = HexMath.axial_to_pixel(world_map.hero_pos.x, world_map.hero_pos.y, world_map.hex_size)
+	enter_city_button.visible = world_map.is_on_castle()
+	enter_city_button.text = "Wejdź do miasta (E)"
+	world_map.queue_redraw()
+	_refresh_hud()
+
+
+func _migrate_old_save() -> void:
+	if FileAccess.file_exists(OLD_SAVE_PATH) and not FileAccess.file_exists(slot_path(1)):
+		DirAccess.rename_absolute(ProjectSettings.globalize_path(OLD_SAVE_PATH), ProjectSettings.globalize_path(slot_path(1)))
+
+
+func _ui_busy() -> bool:
+	return battle_overlay.visible or city_panel.visible or (_magic_panel != null and _magic_panel.visible) or (_skill_panel != null and _skill_panel.visible) or pending_skill_picks > 0 or (_end_panel != null and _end_panel.visible) or _hp_panel != null
+
+
+func save_game(slot: int) -> void:
+	if _ui_busy():
+		info_label.text = "Nie można zapisać teraz — zamknij bitwę, miasto lub wybór umiejętności."
+		return
+	var data := {
+		"version": SAVE_VERSION,
+		"saved_at": Time.get_datetime_string_from_system(false, true),
+		"gold": gold,
+		"wood": wood,
+		"ore": ore,
+		"hero_army": Array(hero_army),
+		"faction": player_faction,
+		"hero_name": hero_name,
+		"hero_level": hero_level,
+		"hero_xp": hero_xp,
+		"hero_skills": hero_skills.duplicate(),
+		"hero_artifacts": Array(hero_artifacts),
+		"hero_mana": hero_mana,
+		"hero_spells": Array(hero_spells),
+		"base_max_movement": base_max_movement,
+		"world_map": world_map.get_save_data(),
+		"castle_buildings": castle_buildings.duplicate(true),
+		"game_won": game_won,
+		"game_lost": game_lost,
+		"stats": stats.duplicate(),
+		"campaign_mission": campaign_mission,
+		"f7": _f7_save(),
+		"h4": _h4_save(),
+		"rival": {"faction": rival_faction, "gold": rival_gold, "army": Array(rival_army),
+			"garrison": Array(rival_garrison), "koszary": rival_koszary},
+	}
+	var f := FileAccess.open(slot_path(slot), FileAccess.WRITE)
+	if f == null:
+		info_label.text = "Błąd zapisu (%s)." % error_string(FileAccess.get_open_error())
+		return
+	f.store_string(JSON.stringify(data, "\t"))
+	f.close()
+	info_label.text = "Gra zapisana w slocie %d." % slot
+
+
+func load_game(slot: int) -> void:
+	if _ui_busy():
+		info_label.text = "Nie można wczytać teraz — zamknij bitwę, miasto lub wybór umiejętności."
+		return
+	var d := _read_slot(slot)
+	if d.is_empty():
+		info_label.text = "Slot %d pusty lub uszkodzony." % slot
+		return
+	gold = int(d.get("gold", gold))
+	wood = int(d.get("wood", 10))
+	ore = int(d.get("ore", 10))
+	hero_army.clear()
+	player_faction = str(d.get("faction", "polska"))
+	for u in d.get("hero_army", []):
+		hero_army.append(str(u))
+	hero_name = str(d.get("hero_name", hero_name))
+	hero_level = int(d.get("hero_level", 1))
+	hero_xp = int(d.get("hero_xp", 0))
+	var sk: Dictionary = d.get("hero_skills", {})
+	for sid in ["atak", "obrona", "logistyka", "magia"]:
+		hero_skills[sid] = int(sk.get(sid, 0))
+	pending_skill_picks = 0
+	hero_artifacts.clear()
+	for a in d.get("hero_artifacts", []):
+		hero_artifacts.append(str(a))
+	base_max_movement = int(d.get("base_max_movement", base_max_movement))
+	_fight_army_id = ""
+	_siege_region_id = ""
+	_siege_region_name = ""
+	world_map.apply_save_data(d["world_map"])
+	castle_buildings.clear()
+	var cb: Dictionary = d.get("castle_buildings", {})
+	for rid in cb:
+		var src: Dictionary = cb[rid]
+		castle_buildings[str(rid)] = {
+			"ratusz": int(src.get("ratusz", 0)),
+			"koszary": clampi(int(src.get("koszary", 1)), 0, 5),
+			"kuznia": int(src.get("kuznia", 0)),
+			"wieza": int(src.get("wieza", 0)),
+			"targ": clampi(int(src.get("targ", 0)), 0, 3),
+			"stajnia": clampi(int(src.get("stajnia", 0)), 0, 2),
+			"mur": clampi(int(src.get("mur", 0)), 0, 3),
+		}
+	hero_spells.clear()
+	for sp in d.get("hero_spells", ["wizja", "blyskawica", "leczenie"]):
+		if SPELL_DEFS.has(str(sp)):
+			hero_spells.append(str(sp))
+	_sync_spells()
+	hero_mana = clampi(int(d.get("hero_mana", MANA_START)), 0, max_mana())
+	world_map.set_process_unhandled_input(true)
+	camera.position = HexMath.axial_to_pixel(world_map.hero_pos.x, world_map.hero_pos.y, world_map.hex_size)
+	_refresh_hud()
+	_refresh_city()
+	enter_city_button.visible = world_map.is_on_castle()
+	_f7_load(d.get("f7", {}))
+	_h4_load(d.get("h4", {}))
+	if d.has("rival"):
+		var rv: Dictionary = d["rival"]
+		rival_faction = str(rv.get("faction", "szwecja"))
+		rival_gold = int(rv.get("gold", 0))
+		rival_koszary = int(rv.get("koszary", 1))
+		rival_army.clear()
+		for u in rv.get("army", []):
+			rival_army.append(str(u))
+		rival_garrison.clear()
+		for u in rv.get("garrison", []):
+			rival_garrison.append(str(u))
+	else:
+		_init_rival()
+	var st: Dictionary = d.get("stats", {})
+	for k in stats.keys():
+		stats[k] = int(st.get(k, 0))
+	campaign_mission = int(d.get("campaign_mission", 0))
+	game_won = bool(d.get("game_won", false))
+	game_lost = bool(d.get("game_lost", false))
+	_end_panel.visible = false
+	info_label.text = "Wczytano %s. Cel: %s" % [("autozapis" if slot == AUTO_SLOT else ("autozapis (poprz. tura)" if slot == AUTO_SLOT - 1 else "slot %d" % slot)), objective_text()]
+	_audio_track("map")
+	if game_won or game_lost:
+		_show_end_panel(game_won)
+
+
+# --- Magia ---
+func has_mage_tower() -> bool:
+	for rid in world_map.owned_region_ids:
+		if int(get_buildings(rid).get("wieza", 0)) > 0:
+			return true
+	return false
+
+
+func max_mana() -> int:
+	return MANA_START + (TOWER_MANA_BONUS if has_mage_tower() else 0) + 3 * int(hero_skills.get("magia", 0)) + artifact_fx("mana")
+
+
+func spell_level_cap() -> int:
+	return 2 if has_mage_tower() else 1
+
+
+## Dopisuje czary dostępne przy obecnym poziomie wieży.
+func _sync_spells() -> void:
+	for sid in SPELL_ORDER:
+		if int(SPELL_DEFS[sid]["level"]) <= spell_level_cap() and not hero_spells.has(sid):
+			hero_spells.append(sid)
+
+
+func _build_magic_ui() -> void:
+	var hb: BoxContainer = $UI/TopBar/HBox
+	var mb := Button.new()
+	mb.text = "Magia (M)"
+	mb.focus_mode = Control.FOCUS_NONE
+	mb.pressed.connect(toggle_magic_panel)
+	hb.add_child(mb)
+	var bb := Button.new()
+	bb.text = "Magia (M)"
+	bb.focus_mode = Control.FOCUS_NONE
+	bb.position = Vector2(12, 52)
+	bb.pressed.connect(toggle_magic_panel)
+	battle_overlay.add_child(bb)
+	_magic_panel = ColorRect.new()
+	_magic_panel.color = Color(0.03, 0.03, 0.1, 0.6)
+	_magic_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_magic_panel.visible = false
+	$UI.add_child(_magic_panel)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_magic_panel.add_child(center)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(460, 200)
+	center.add_child(panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 8)
+	panel.add_child(vb)
+	_magic_title = Label.new()
+	_magic_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_magic_title.add_theme_font_size_override("font_size", 20)
+	vb.add_child(_magic_title)
+	for sid in SPELL_ORDER:
+		var b := Button.new()
+		b.custom_minimum_size = Vector2(440, 36)
+		b.pressed.connect(_on_spell_pressed.bind(sid))
+		vb.add_child(b)
+		_magic_buttons[sid] = b
+	var close := Button.new()
+	close.text = "Zamknij (M)"
+	close.pressed.connect(func(): _close_magic_panel())
+	vb.add_child(close)
+
+
+func toggle_magic_panel() -> void:
+	if _magic_panel.visible:
+		_close_magic_panel()
+		return
+	if _menu_root.visible or city_panel.visible or _skill_panel.visible:
+		return
+	var in_battle: bool = battle_overlay.visible
+	if in_battle and not battle_overlay.field.is_player_turn():
+		info_label.text = "Czary tylko w twojej turze."
+		return
+	_magic_title.text = "Księga czarów · Mana %d/%d%s" % [hero_mana, max_mana(), " · bitwa" if in_battle else " · mapa"]
+	for sid in SPELL_ORDER:
+		var def: Dictionary = SPELL_DEFS[sid]
+		var b: Button = _magic_buttons[sid]
+		var known := hero_spells.has(sid)
+		var right_place: bool = (str(def["where"]) == "battle") == in_battle
+		b.text = "%s (%d many, poz. %d) — %s%s" % [def["name"], int(def["cost"]), int(def["level"]), def["desc"],
+			"" if known else " [wymaga Wieży magów]"]
+		b.disabled = not known or not right_place or hero_mana < int(def["cost"])
+	_magic_panel.visible = true
+	battle_overlay.field.set_process_input(false)
+	world_map.set_process_unhandled_input(false)
+
+
+func _close_magic_panel() -> void:
+	_magic_panel.visible = false
+	battle_overlay.field.set_process_input(true)
+	if not _ui_busy() and not _menu_root.visible:
+		world_map.set_process_unhandled_input(true)
+
+
+func _on_spell_pressed(sid: String) -> void:
+	var def: Dictionary = SPELL_DEFS[sid]
+	var cost: int = int(def["cost"])
+	_close_magic_panel()
+	if hero_mana < cost:
+		info_label.text = "Za mało many."
+		return
+	if str(def["where"]) == "battle":
+		battle_overlay.field.mana = hero_mana
+		var err: String = battle_overlay.field.begin_spell(sid, cost)
+		if err != "":
+			battle_overlay.status_label.text = err
+		return
+	if sid == "wizja":
+		_audio_play("spell")
+		hero_mana -= cost
+		info_label.text = _vision_text()
+		_refresh_hud()
+
+
+func _vision_text() -> String:
+	var best := -1
+	var best_pos := Vector2i.ZERO
+	for pos in world_map._armies.keys():
+		var d: int = HexMath.distance(world_map.hero_pos, pos)
+		if best < 0 or d < best:
+			best = d
+			best_pos = pos
+	if best < 0:
+		return "Wizja: brak wrogich armii na mapie."
+	var a: Dictionary = world_map._armies[best_pos]
+	return "Wizja: %s · hex (%d, %d) · %d hexów od bohatera" % [str(a.get("name", "?")), best_pos.x, best_pos.y, best]
+
+
+func _on_battle_spell_cast(_sid: String, cost: int) -> void:
+	_audio_play("spell")
+	hero_mana = maxi(0, hero_mana - cost)
+	_refresh_hud()
+
+
+# --- Cel kampanii / zwycięstwo / porażka ---
+const VICTORY_CASTLES := 5
+const VICTORY_CAPITAL_REGION := "ukraina"
+const VICTORY_CAPITAL_NAME := "Kijów"
+var game_won: bool = false
+var game_lost: bool = false
+var _end_panel: ColorRect = null
+var _end_title: Label = null
+var _end_text: Label = null
+
+
+func objective_text() -> String:
+	if not scenario.is_empty():
+		return _scen_goal_text()
+	if campaign_mission > 0:
+		return str(MISSIONS[campaign_mission - 1]["goal"])
+	return "zdobądź %d zamków albo stolicę %s" % [VICTORY_CASTLES, VICTORY_CAPITAL_NAME]
+
+
+func _build_end_panel() -> void:
+	_end_panel = ColorRect.new()
+	_end_panel.color = Color(0.05, 0.04, 0.03, 0.94)
+	_end_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_end_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_end_panel.visible = false
+	$UI.add_child(_end_panel)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_end_panel.add_child(center)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 16)
+	center.add_child(box)
+	_end_title = Label.new()
+	_end_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_end_title.add_theme_font_size_override("font_size", 56)
+	box.add_child(_end_title)
+	_end_text = Label.new()
+	_end_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_end_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_end_text.custom_minimum_size = Vector2(560, 0)
+	box.add_child(_end_text)
+	_btn_next = _mk_button(box, "Następna misja", func():
+		_start_mission(campaign_mission + 1))
+	_btn_retry = _mk_button(box, "Powtórz misję", func():
+		_start_mission(campaign_mission))
+	_mk_button(box, "Nowa gra", func():
+		_pending_faction = player_faction
+		_skip_menu = true
+		get_tree().reload_current_scene())
+	_btn_scores = _mk_button(box, "Tabela wyników", func(): _show_ranking(_last_entry))
+	_mk_button(box, "Menu", func():
+		_skip_menu = false
+		get_tree().reload_current_scene())
+
+
+func _show_end_panel(won: bool) -> void:
+	var n: int = world_map.owned_castle_count()
+	if won:
+		_end_title.text = "Zwycięstwo!"
+		_end_title.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+		_end_text.text = "%s zjednoczył ziemie Rzeczypospolitej.\nZamki: %d/%d%s · poziom bohatera %d." % [
+			hero_name, n, VICTORY_CASTLES,
+			(" · %s zdobyty" % VICTORY_CAPITAL_NAME) if world_map.is_region_owned(VICTORY_CAPITAL_REGION) else "",
+			hero_level]
+		_audio_play("victory")
+		_unlock("zwyciezca")
+		if campaign_mission > 0:
+			_end_title.text = "Misja wykonana!"
+			_end_text.text = str(MISSIONS[campaign_mission - 1]["outro"])
+			_campaign_unlock(campaign_mission + 1)
+			if campaign_mission == MISSIONS.size():
+				_unlock("potop")
+	else:
+		_end_title.text = "Porażka"
+		_end_title.add_theme_color_override("font_color", Color(0.9, 0.3, 0.3))
+		_end_text.text = "%s został bez wojska i bez złota na rekrutację.\nKampania przegrana." % hero_name
+		_audio_play("defeat")
+	if not won and campaign_mission > 0:
+		_end_text.text = "Misja przegrana: %s" % str(MISSIONS[campaign_mission - 1]["title"])
+	_end_text.text += "\n\n" + stats_text() + "\n\nOsiągnięcia: %d/%d" % [_ach_unlocked().size(), ACHIEVEMENTS.size()]
+	if _btn_next != null:
+		_btn_next.visible = won and campaign_mission > 0 and campaign_mission < MISSIONS.size()
+	if _btn_retry != null:
+		_btn_retry.visible = campaign_mission > 0
+	_end_panel.visible = true
+	world_map.set_process_unhandled_input(false)
+	_rk_record(won)
+	_end_text.text += "\n\nWynik: %d pkt — miejsce #%d w rankingu" % [int(_last_entry.get("score", 0)), _rk_place(_last_entry)]
+
+
+func _check_game_end() -> void:
+	if game_won or game_lost or _end_panel == null:
+		return
+	if campaign_mission > 0:
+		var res := _mission_result()
+		if res != 0:
+			game_won = res > 0
+			game_lost = res < 0
+			_show_end_panel(game_won)
+		return
+	if hotseat:
+		_hs_check_end()
+		return
+	if not scenario.is_empty():
+		var sres := _scen_result()
+		if sres != 0:
+			game_won = sres > 0
+			game_lost = sres < 0
+			_show_end_panel(game_won)
+		return
+	if world_map.owned_castle_count() >= VICTORY_CASTLES or world_map.is_region_owned(VICTORY_CAPITAL_REGION):
+		game_won = true
+		_show_end_panel(true)
+	elif world_map.owned_castle_count() == 0 or (_all_armies_empty() and gold < int(UNIT_CATALOG["piechota"]["cost"])):
+		game_lost = true
+		_show_end_panel(false)
+
+
+# --- Styl prawego panelu (HoMM3, bez przezroczystości) ---
+const SIDE_BG := Color(0.24, 0.17, 0.10, 1.0)
+const SIDE_BORDER := Color(0.78, 0.60, 0.25, 1.0)
+const SIDE_CARD := Color(0.31, 0.23, 0.14, 1.0)
+const SIDE_TEXT := Color(0.96, 0.90, 0.76, 1.0)
+const SIDE_GOLD := Color(1.0, 0.84, 0.38, 1.0)
+const SIDE_GREEN := Color(0.62, 0.82, 0.48, 1.0)
+
+
+func _sb(bg: Color, border: Color, bw: int, radius: int, pad: int) -> StyleBoxFlat:
+	var s := StyleBoxFlat.new()
+	s.bg_color = bg
+	s.border_color = border
+	s.set_border_width_all(bw)
+	s.set_corner_radius_all(radius)
+	s.set_content_margin_all(pad)
+	return s
+
+
+func _style_side_panel() -> void:
+	var panel: PanelContainer = $UI/TopBar
+	panel.offset_left = -310.0
+	var main_sb := _tex_sb(UI_WOOD, 16)
+	panel.add_theme_stylebox_override("panel", main_sb)
+	var box: VBoxContainer = $UI/TopBar/HBox
+	box.add_theme_constant_override("separation", 8)
+	for c in box.get_children():
+		if c is Label:
+			var l := c as Label
+			l.add_theme_color_override("font_color", SIDE_TEXT)
+			l.add_theme_color_override("font_shadow_color", Color(0.08, 0.05, 0.02, 1))
+			l.add_theme_constant_override("shadow_offset_x", 1)
+			l.add_theme_constant_override("shadow_offset_y", 1)
+		elif c is HSeparator:
+			var line := StyleBoxLine.new()
+			line.color = SIDE_BORDER.darkened(0.25)
+			line.thickness = 2
+			c.add_theme_stylebox_override("separator", line)
+			c.add_theme_constant_override("separation", 12)
+		elif c is Button:
+			_style_side_button(c as Button)
+	# karty sekcji
+	for n in ["HeroLabel", "GoldLabel", "MpLabel", "ArmyLabel", "ArtLabel", "ObjLabel"]:
+		var l := box.get_node_or_null(n) as Label
+		if l:
+			l.add_theme_stylebox_override("normal", _parch_sb(8))
+			l.add_theme_color_override("font_color", PARCH_TEXT)
+			l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0))
+	var title := box.get_node("TitleLabel") as Label
+	title.add_theme_color_override("font_color", SIDE_GOLD)
+	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_stylebox_override("normal", _sb(Color(0.45, 0.10, 0.10, 1), SIDE_BORDER, 2, 4, 8))
+	(box.get_node("GoldLabel") as Label).add_theme_color_override("font_color", Color(0.55, 0.36, 0.0))
+	(box.get_node("MpLabel") as Label).add_theme_color_override("font_color", Color(0.15, 0.38, 0.10))
+	(box.get_node("ObjLabel") as Label).add_theme_color_override("font_color", Color(0.48, 0.08, 0.06))
+	# końcowy przycisk wyróżniony
+	var et := end_turn_button
+	et.add_theme_stylebox_override("normal", _sb(Color(0.20, 0.38, 0.16, 1), SIDE_GOLD, 2, 5, 10))
+	et.add_theme_stylebox_override("hover", _sb(Color(0.27, 0.48, 0.20, 1), SIDE_GOLD, 2, 5, 10))
+	et.add_theme_stylebox_override("pressed", _sb(Color(0.15, 0.28, 0.12, 1), SIDE_GOLD, 2, 5, 10))
+	box.move_child(et, box.get_child_count() - 1)
+	_compact_side_panel(box, main_sb)
+	# dolny pasek info
+	var info: PanelContainer = $UI/InfoPanel
+	info.offset_right = -322.0
+	info.add_theme_stylebox_override("panel", _parch_sb(10))
+	info_label.add_theme_color_override("font_color", PARCH_TEXT)
+
+
+const UI_WOOD := "res://assets/ui/wood.png"
+const UI_PARCH := "res://assets/ui/parchment.png"
+const PARCH_TEXT := Color(0.24, 0.14, 0.06, 1)
+
+
+func _tex_sb(path: String, pad: int) -> StyleBoxTexture:
+	var s := StyleBoxTexture.new()
+	s.texture = load(path)
+	s.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE_FIT
+	s.axis_stretch_vertical = StyleBoxTexture.AXIS_STRETCH_MODE_TILE_FIT
+	s.set_content_margin_all(pad)
+	return s
+
+
+## Pergamin z ciemną ramką (warstwa: ramka flat + tekstura pod spodem nie jest możliwa,
+## więc tekstura z lekko przyciemnionymi krawędziami obrazu).
+func _parch_sb(pad: int) -> StyleBoxTexture:
+	var s := _tex_sb(UI_PARCH, pad)
+	s.set_texture_margin_all(24)
+	s.draw_center = true
+	return s
+
+
+func _style_menu_button(b: Button) -> void:
+	var gold := Color(0.80, 0.62, 0.25, 1)
+	b.add_theme_stylebox_override("normal", _sb(Color(0.36, 0.08, 0.07, 1), gold, 2, 3, 8))
+	b.add_theme_stylebox_override("hover", _sb(Color(0.50, 0.12, 0.09, 1), Color(1, 0.85, 0.4, 1), 2, 3, 8))
+	b.add_theme_stylebox_override("pressed", _sb(Color(0.25, 0.05, 0.04, 1), gold, 2, 3, 8))
+	b.add_theme_stylebox_override("disabled", _sb(Color(0.35, 0.28, 0.22, 1), Color(0.5, 0.4, 0.3, 1), 2, 3, 8))
+	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	b.add_theme_color_override("font_color", Color(0.98, 0.88, 0.62))
+	b.add_theme_color_override("font_hover_color", Color(1, 0.95, 0.7))
+	b.add_theme_color_override("font_disabled_color", Color(0.7, 0.65, 0.55))
+	b.add_theme_font_size_override("font_size", 17)
+
+
+func _style_side_button(b: Button) -> void:
+	b.custom_minimum_size.y = 34
+	b.add_theme_stylebox_override("normal", _sb(Color(0.42, 0.29, 0.15, 1), Color(0.62, 0.46, 0.20, 1), 2, 5, 6))
+	b.add_theme_stylebox_override("hover", _sb(Color(0.52, 0.37, 0.19, 1), SIDE_GOLD, 2, 5, 6))
+	b.add_theme_stylebox_override("pressed", _sb(Color(0.30, 0.20, 0.10, 1), SIDE_GOLD, 2, 5, 6))
+	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	b.add_theme_color_override("font_color", SIDE_TEXT)
+	b.add_theme_color_override("font_hover_color", SIDE_GOLD)
+	b.add_theme_color_override("font_pressed_color", SIDE_GOLD)
+
+
+## Kompaktuje prawy panel, żeby mieścił się w 720 px (nic nie ucina góry/dołu).
+func _compact_side_panel(box: VBoxContainer, main_sb: StyleBox) -> void:
+	main_sb.content_margin_top = 10
+	main_sb.content_margin_bottom = 10
+	main_sb.content_margin_left = 14
+	main_sb.content_margin_right = 12
+	box.add_theme_constant_override("separation", 5)
+	var panel: PanelContainer = $UI/TopBar
+	panel.offset_top = 0.0
+	panel.offset_bottom = 0.0
+	panel.clip_contents = true
+	for c in box.get_children():
+		if c is HSeparator:
+			c.add_theme_constant_override("separation", 6)
+		elif c is Label:
+			for n in ["HeroLabel", "GoldLabel", "MpLabel", "ArmyLabel", "ArtLabel", "ObjLabel"]:
+				if c.name == n:
+					(c as Label).add_theme_stylebox_override("normal", _parch_sb(5))
+	# przyciski akcji w siatce 2 kolumn
+	var grid := GridContainer.new()
+	grid.name = "ActionGrid"
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 6)
+	grid.add_theme_constant_override("v_separation", 6)
+	var btns: Array = []
+	for c in box.get_children():
+		if c is Button and c != end_turn_button:
+			btns.append(c)
+	box.add_child(grid)
+	box.move_child(grid, end_turn_button.get_index())
+	for b in btns:
+		box.remove_child(b)
+		(b as Button).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		(b as Button).custom_minimum_size = Vector2(0, 30)
+		(b as Button).clip_text = true
+		(b as Button).add_theme_font_size_override("font_size", 13)
+		grid.add_child(b)
+	end_turn_button.custom_minimum_size.y = 40
+
+
+# --- Rywal AI (jeden przeciwnik grający jak gracz) ---
+const RIVAL_ID := "rival_hero"
+const RIVAL_BASE_INCOME := 60
+const RIVAL_ATTACK_SIZE := 5
+var rival_faction: String = "szwecja"
+var rival_gold: int = 0
+var rival_army: Array[String] = []
+var rival_garrison: Array[String] = []
+var rival_koszary: int = 1
+
+
+func _init_rival() -> void:
+	rival_faction = ""
+	for fid in ["szwecja", "osmanowie", "moskwa", "kozacy", "brandenburgia", "polska"]:
+		if fid != player_faction and FACTIONS.has(fid):
+			rival_faction = fid
+			break
+	var sr := str(scenario.get("rival_faction", ""))
+	if sr != "" and sr != player_faction and FACTIONS.has(sr):
+		rival_faction = sr
+	var f: Dictionary = FACTIONS[rival_faction]
+	var rid := str(f["region"])
+	if str(scenario.get("rival_region", "")) != "" and str(scenario["rival_region"]) != str(scenario.get("start_region", "")):
+		rid = str(scenario["rival_region"])
+	world_map.owned_region_ids.erase(rid)
+	world_map.rival_region_ids.clear()
+	world_map.rival_region_ids.append(rid)
+	rival_gold = [150, 300, 600][difficulty]
+	rival_koszary = 1
+	rival_garrison.clear()
+	rival_army.clear()
+	for u in f.get("army", ["piechota", "piechota", "lucznicy"]):
+		rival_army.append(str(u))
+	world_map.remove_army(RIVAL_ID)
+	var cp: Vector2i = world_map.castle_pos(rid)
+	if cp.x >= 0:
+		_spawn_rival_army_near(cp)
+
+
+func _spawn_rival_army_near(cp: Vector2i) -> void:
+	var cell := cp
+	if world_map.hero_pos == cell or not world_map.army_at(cell).is_empty():
+		for n in HexMath.neighbors(cp):
+			if world_map._cells.has(n) and not world_map.is_blocked(n) \
+					and world_map.army_at(n).is_empty() and n != world_map.hero_pos:
+				cell = n
+				break
+	world_map.place_army(cell, {"id": RIVAL_ID, "name": "Hetman rywala", "faction": "rival"})
+
+
+func _rival_home() -> Vector2i:
+	for rid in world_map.rival_region_ids:
+		var cp: Vector2i = world_map.castle_pos(rid)
+		if cp.x >= 0:
+			return cp
+	return Vector2i(-1, -1)
+
+
+func _rival_unit_need(uid: String) -> int:
+	if UNIT_BARRACKS_LEVEL.has(uid):
+		return int(UNIT_BARRACKS_LEVEL[uid])
+	var units: Array = FACTIONS[rival_faction]["units"]
+	return 1 + int(units.find(uid) / 2)
+
+
+func _army_power(ids: Array, bonus: int = 0) -> int:
+	var p := 0
+	for u in ids:
+		var def: Dictionary = UNIT_CATALOG.get(str(u), {})
+		if not def.is_empty():
+			p += int(def["hp"]) * (int(def["dmg"]) + bonus)
+	return p
+
+
+func hero_power() -> int:
+	return _army_power(hero_army, int(hero_skills["atak"]) + artifact_dmg_bonus())
+
+
+func rival_power() -> int:
+	return _army_power(rival_army, 1 + rival_koszary / 2 + difficulty - 1)
+
+
+## Ustawia cel ruchu rywala przed ruchem armii (AI: obrona, unikanie słabych walk, wzmacnianie).
+func _rival_plan() -> void:
+	var home := _rival_home()
+	var pos: Vector2i = world_map.army_pos(RIVAL_ID)
+	world_map.rival_avoid_hero = false
+	if pos.x < 0:
+		world_map.rival_target = Vector2i(-1, -1)
+		return
+	var hp := maxi(1, hero_power())
+	var rp := rival_power()
+	var ratio := float(rp) / float(hp)
+	var target := home
+	if treaty != "wojna":
+		world_map.rival_avoid_hero = true
+		world_map.rival_target = home
+		return
+	# 1) Obrona zamku: bohater gracza blisko naszego zamku
+	var threatened := Vector2i(-1, -1)
+	for rid in world_map.rival_region_ids:
+		var cp: Vector2i = world_map.castle_pos(rid)
+		if cp.x >= 0 and HexMath.distance(world_map.hero_pos, cp) <= 4:
+			threatened = cp
+			break
+	if threatened.x >= 0:
+		target = threatened
+		# Zbyt słaby, by wyjść w pole — stój w zamku i łącz z garnizonem
+		world_map.rival_avoid_hero = ratio < 1.1
+	elif ratio < [1.5, 1.2, 0.9][difficulty]:
+		# 2) Unikaj słabych walk — wracaj do domu po posiłki
+		target = home
+		world_map.rival_avoid_hero = true
+	else:
+		# 3) Przewaga: niebroniony zamek gracza albo sam bohater
+		target = world_map.hero_pos
+		var best_d := 999
+		for rid in world_map.owned_region_ids:
+			var cp: Vector2i = world_map.castle_pos(rid)
+			if cp.x >= 0 and cp != world_map.hero_pos and HexMath.distance(world_map.hero_pos, cp) > 3:
+				var d := HexMath.distance(pos, cp)
+				if d <= 8 and d < best_d:
+					best_d = d
+					target = cp
+	if home.x < 0 and target.x < 0:
+		target = world_map.hero_pos
+	world_map.rival_target = target
+
+
+## Ekonomia, rozbudowa, rekrutacja i podboje rywala. Zwraca komunikat.
+func _rival_turn() -> String:
+	if rival_faction == "":
+		return ""
+	var msgs: Array[String] = []
+	var home := _rival_home()
+	var pos: Vector2i = world_map.army_pos(RIVAL_ID)
+	# Zajęcie zamku, na którym stoi armia rywala
+	if pos.x >= 0 and pos != world_map.hero_pos:
+		var rid: String = world_map.castle_region_at(pos)
+		if rid != "" and not (rid in world_map.rival_region_ids) and not (treaty != "wojna" and rid in world_map.owned_region_ids):
+			var was_player: bool = rid in world_map.owned_region_ids
+			world_map.owned_region_ids.erase(rid)
+			world_map.rival_region_ids.append(rid)
+			castle_buildings.erase(rid)
+			world_map.queue_redraw()
+			msgs.append("Rywal zajął zamek %s!" % (world_map._region_by_id.get(rid, {}).get("capital", rid)) if was_player else "Rywal zajął nowy zamek")
+	rival_gold += int((RIVAL_BASE_INCOME + INCOME_PER_CASTLE * world_map.rival_region_ids.size()) * [0.7, 1.0, 1.4][difficulty]) + (40 if treaty == "sojusz" else 0)
+	if home.x < 0:
+		return " · ".join(msgs)
+	# Rozbudowa koszar
+	var up_cost := 250 * rival_koszary
+	if rival_koszary < 4 and rival_gold >= up_cost:
+		rival_gold -= up_cost
+		rival_koszary += 1
+		msgs.append("Rywal rozbudował koszary (poz. %d)" % rival_koszary)
+	# Respawn armii z garnizonu
+	if pos.x < 0 and not rival_garrison.is_empty():
+		rival_army.clear()
+		for u in rival_garrison:
+			if rival_army.size() < MAX_ARMY_SLOTS:
+				rival_army.append(u)
+		rival_garrison.clear()
+		_spawn_rival_army_near(home)
+		pos = world_map.army_pos(RIVAL_ID)
+		msgs.append("Rywal wystawił nową armię")
+	var at_home: bool = pos.x >= 0 and HexMath.distance(pos, home) <= 1
+	# Wzmocnienie w domu: przejmij garnizon do armii
+	if at_home and not rival_garrison.is_empty():
+		var moved := 0
+		while not rival_garrison.is_empty() and rival_army.size() < MAX_ARMY_SLOTS:
+			rival_army.append(rival_garrison.pop_back())
+			moved += 1
+		if moved > 0:
+			msgs.append("Rywal wzmacnia armię w zamku (+%d)" % moved)
+	# Rekrutacja: najdroższa dostępna jednostka
+	var units: Array = FACTIONS[rival_faction]["units"]
+	var recruited := 0
+	var reserve: int = (250 * rival_koszary) / 2 if rival_koszary < 4 and rival_army.size() >= 3 else 0
+	for _i in 3:
+		var best := ""
+		for uid in units:
+			if _rival_unit_need(str(uid)) <= rival_koszary and int(UNIT_CATALOG[uid]["cost"]) <= rival_gold - reserve:
+				if best == "" or int(UNIT_CATALOG[uid]["cost"]) > int(UNIT_CATALOG[best]["cost"]):
+					best = str(uid)
+		if best == "":
+			break
+		if at_home and rival_army.size() < MAX_ARMY_SLOTS:
+			rival_army.append(best)
+		elif rival_garrison.size() < MAX_ARMY_SLOTS:
+			rival_garrison.append(best)
+		else:
+			break
+		rival_gold -= int(UNIT_CATALOG[best]["cost"])
+		recruited += 1
+	if recruited > 0:
+		msgs.append("Rywal rekrutuje (+%d)" % recruited)
+	return " · ".join(msgs)
+
+
+func _rival_battle_units(ids: Array, siege: bool = false) -> Array:
+	var out: Array = []
+	var slots := [Vector2i(9, 2), Vector2i(9, 3), Vector2i(9, 4), Vector2i(9, 5), Vector2i(8, 3), Vector2i(8, 4), Vector2i(8, 5)]
+	var bonus := (int(_hs_other.get("skills", {}).get("atak", 0)) if hotseat else 1 + rival_koszary / 2 + difficulty - 1)
+	for i in mini(ids.size(), slots.size()):
+		var id := str(ids[i])
+		var def: Dictionary = UNIT_CATALOG.get(id, {})
+		if def.is_empty():
+			continue
+		out.append({
+			"name": str(def["name"]) + " (wróg)", "unit_id": id,
+			"hp": int(def["hp"]) + (10 if siege else 0), "dmg": int(def["dmg"]) + bonus,
+			"speed": int(def["speed"]), "range": int(def.get("range", 1)),
+			"color": Color(0.6, 0.2, 0.75), "pos": slots[i],
+		})
+	return out
+
+
+# =====================================================================
+# --- Kampania: Potop szwedzki ---
+const CAMPAIGN_PATH := "user://campaign.json"
+const MISSIONS := [
+	{"title": "I. Obrona Krakowa", "goal": "Utrzymaj Kraków przez 12 tur albo rozbij armię szwedzką",
+		"intro": "Rok 1655. Szwedzi Karola X Gustawa wlali się do Rzeczypospolitej jak potop. Warszawa padła bez walki, a armia najeźdźcy ciągnie na Kraków.\n\nHetmanie! Zbierz chorągwie, wzmocnij mury i nie oddaj dawnej stolicy. Wytrzymaj 12 tur albo rozbij szwedzkie wojsko w polu.\n\nCel: utrzymaj Kraków (12 tur) LUB pokonaj armię rywala.",
+		"outro": "Szwedzki szturm odparty! Kraków stoi, a wieść o oporze niesie się po kraju. Czas ruszyć na północ."},
+	{"title": "II. Odzyskanie Warszawy", "goal": "Zdobądź Warszawę (Mazowsze)",
+		"intro": "Rok 1656. Po obronie Jasnej Góry szlachta chwyta za szable. Konfederacja tyszowiecka wzywa do powstania.\n\nSzwedzki garnizon trzyma Warszawę. Zbierz wojsko, zdobądź łupy po drodze i odbij stolicę — wyłam bramę, zniszcz wieże.\n\nCel: zdobądź zamek Warszawa.",
+		"outro": "Warszawa odbita! Szwedzi cofają się ku Prusom i Inflantom. Ostatni akt Potopu przed nami."},
+	{"title": "III. Koniec Potopu", "goal": "Zdobądź Gdańsk (Prusy) i Rygę (Inflanty)",
+		"intro": "Rok 1658. Czarniecki ściga Szwedów, a husaria znów błyszczy w polu. Najeźdźca okopał się w Prusach i Inflantach.\n\nWypędź ich na zawsze. Zdobądź Gdańsk i Rygę, a pokój w Oliwie stanie się faktem.\n\nCel: zdobądź Gdańsk i Rygę.",
+		"outro": "Szwedzi wyparci! Pokój w Oliwie (1660) kończy Potop. Rzeczpospolita przetrwała — chwała hetmanowi!"},
+	{"title": "IV. Odsiecz Wilna", "goal": "Odbij Wilno (Litwa) z rąk Moskwy w 25 tur",
+		"intro": "Rok 1660. Szwedzi odeszli, ale na wschodzie wciąż stoi armia cara. Od 1655 roku Wilno jest w rękach moskiewskich, a Chowański pustoszy Litwę.\n\nHetmanie! Ruszaj z Warszawy na północny wschód, pobij wojska Chowańskiego w polu i odbij stolicę Wielkiego Księstwa — zanim nadejdą posiłki cara.\n\nCel: zdobądź Wilno w 25 tur.",
+		"outro": "Wilno wolne! Po zwycięstwach pod Połonką i Cudnowem Rzeczpospolita odzyskuje Litwę. Chwała hetmanowi!"},
+]
+static var _pending_mission: int = 0
+var campaign_mission: int = 0
+var _campaign_box: VBoxContainer = null
+var _btn_next: Button = null
+var _btn_retry: Button = null
+var _story_panel: ColorRect = null
+
+
+func _campaign_progress() -> int:
+	if not FileAccess.file_exists(CAMPAIGN_PATH):
+		return 1
+	var d: Variant = JSON.parse_string(FileAccess.get_file_as_string(CAMPAIGN_PATH))
+	return int(d.get("unlocked", 1)) if typeof(d) == TYPE_DICTIONARY else 1
+
+
+func _campaign_unlock(n: int) -> void:
+	if n <= _campaign_progress():
+		return
+	var f := FileAccess.open(CAMPAIGN_PATH, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify({"unlocked": mini(n, MISSIONS.size())}))
+
+
+func _show_campaign_menu() -> void:
+	if _campaign_box != null:
+		_campaign_box.queue_free()
+	_campaign_box = VBoxContainer.new()
+	_campaign_box.add_theme_constant_override("separation", 8)
+	_main_box.get_parent().add_child(_campaign_box)
+	var t := Label.new()
+	t.text = "Potop i wojna z Moskwą (1655–1660)"
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.add_theme_font_size_override("font_size", 22)
+	t.add_theme_color_override("font_color", Color(0.48, 0.08, 0.06))
+	_campaign_box.add_child(t)
+	var prog := _campaign_progress()
+	for i in MISSIONS.size():
+		var b := _mk_button(_campaign_box, str(MISSIONS[i]["title"]) + ("" if i + 1 <= prog else "  🔒"), _start_mission.bind(i + 1))
+		b.disabled = i + 1 > prog
+		b.tooltip_text = str(MISSIONS[i]["goal"])
+	_mk_button(_campaign_box, "Wstecz", _show_main_menu)
+	_main_box.visible = false
+	_campaign_box.visible = true
+
+
+func _start_mission(n: int) -> void:
+	_pending_mission = clampi(n, 1, MISSIONS.size())
+	_pending_faction = "polska"
+	_skip_menu = true
+	get_tree().reload_current_scene()
+
+
+## Konfiguruje świat pod misję (gracz = Rzeczpospolita, rywal = Szwecja).
+func _setup_mission(n: int) -> void:
+	rival_faction = "szwecja" if n <= 3 else "moskwa"
+	var give := func(rid: String, garrison: Array) -> void:
+		world_map.owned_region_ids.erase(rid)
+		if not (rid in world_map.rival_region_ids):
+			world_map.rival_region_ids.append(rid)
+		if rid == "inflanty" or garrison.size() > rival_garrison.size():
+			rival_garrison.clear()
+			for u in garrison:
+				rival_garrison.append(str(u))
+	match n:
+		1:
+			give.call("mazowsze", ["piechota", "lucznicy"])
+			rival_army.clear()
+			for u in ["karolinska_piechota", "karolinska_piechota", "piechota", "lucznicy", "rajtarzy"]:
+				rival_army.append(u)
+			world_map.remove_army(RIVAL_ID)
+			_spawn_rival_army_near(world_map.castle_pos("mazowsze"))
+			gold = 500
+		2:
+			give.call("mazowsze", ["karolinska_piechota", "karolinska_piechota", "lucznicy", "lucznicy", "rajtarzy"])
+			rival_koszary = 2
+			hero_army.append("jazda")
+			hero_army.append("lucznicy")
+			gold = 700
+			castle_buildings["malopolska"] = {"ratusz": 1, "koszary": 3, "kuznia": 0, "wieza": 0, "targ": 0, "stajnia": 0, "mur": 0}
+		3:
+			give.call("prusy", ["karolinska_piechota", "lucznicy", "rajtarzy", "rajtarzy"])
+			give.call("inflanty", ["karolinska_piechota", "karolinska_piechota", "karolinska_piechota", "rajtarzy", "rajtarzy", "lucznicy"])
+			rival_koszary = 3
+			rival_gold = 600
+			hero_army.clear()
+			for u in ["husaria", "lisowczycy", "piechota", "arkebuzerzy", "lucznicy"]:
+				hero_army.append(u)
+			gold = 1000
+			hero_level = 3
+			castle_buildings["malopolska"] = {"ratusz": 1, "koszary": 5, "kuznia": 1, "wieza": 0, "targ": 0, "stajnia": 0, "mur": 0}
+			world_map.owned_region_ids.append("mazowsze")
+		4:
+			world_map.rival_region_ids.clear()
+			for rid in ["prusy", "inflanty"]:
+				world_map.rival_region_ids.erase(rid)
+			give.call("zmudz", ["strzelcy", "piechota", "bojarzy"])
+			give.call("litwa", ["strzelcy", "strzelcy", "strzelcy", "bojarzy", "bojarzy", "piechota"])
+			rival_koszary = 3
+			rival_gold = 500
+			rival_army.clear()
+			for u in ["strzelcy", "strzelcy", "bojarzy", "bojarzy", "piechota", "lucznicy"]:
+				rival_army.append(u)
+			world_map.remove_army(RIVAL_ID)
+			_spawn_rival_army_near(world_map.castle_pos("litwa"))
+			hero_army.clear()
+			for u in ["husaria", "husaria", "lisowczycy", "piechota", "arkebuzerzy", "lucznicy"]:
+				hero_army.append(u)
+			gold = 1200
+			hero_level = 4
+			if not world_map.is_region_owned("mazowsze"):
+				world_map.owned_region_ids.append("mazowsze")
+			castle_buildings["malopolska"] = {"ratusz": 1, "koszary": 5, "kuznia": 1, "wieza": 0, "targ": 0, "stajnia": 0, "mur": 0}
+			var wp: Vector2i = world_map.castle_pos("mazowsze")
+			if wp.x >= 0:
+				world_map.hero_pos = wp
+				world_map._pre_battle_pos = wp
+				world_map.reveal_around(wp, world_map.SIGHT_HERO)
+				world_map._recompute_reach()
+				camera.position = HexMath.axial_to_pixel(wp.x, wp.y, world_map.hex_size)
+	world_map.queue_redraw()
+	_refresh_hud()
+	_show_story(str(MISSIONS[n - 1]["title"]), str(MISSIONS[n - 1]["intro"]), "Do boju!")
+
+
+## 1 = wygrana, -1 = przegrana, 0 = trwa
+func _mission_result() -> int:
+	if hero_army.is_empty() and gold < int(UNIT_CATALOG["piechota"]["cost"]):
+		return -1
+	match campaign_mission:
+		1:
+			if not world_map.is_region_owned("malopolska"):
+				return -1
+			if int(stats["rival_beaten"]) > 0 or int(stats["turns"]) >= 12:
+				return 1
+		2:
+			if world_map.owned_castle_count() == 0:
+				return -1
+			if world_map.is_region_owned("mazowsze"):
+				return 1
+		3:
+			if world_map.owned_castle_count() == 0:
+				return -1
+			if world_map.is_region_owned("prusy") and world_map.is_region_owned("inflanty"):
+				return 1
+		4:
+			if world_map.owned_castle_count() == 0:
+				return -1
+			if world_map.is_region_owned("litwa"):
+				return 1
+			if int(stats["turns"]) >= 25:
+				return -1
+	return 0
+
+
+func _show_story(title: String, text: String, btn: String) -> void:
+	if _story_panel != null:
+		_story_panel.queue_free()
+	_story_panel = ColorRect.new()
+	_story_panel.color = Color(0.04, 0.03, 0.02, 0.9)
+	_story_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_story_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	$UI.add_child(_story_panel)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_story_panel.add_child(center)
+	var frame := PanelContainer.new()
+	frame.add_theme_stylebox_override("panel", _tex_sb(UI_WOOD, 14))
+	center.add_child(frame)
+	var parch := PanelContainer.new()
+	parch.add_theme_stylebox_override("panel", _parch_sb(26))
+	frame.add_child(parch)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 14)
+	parch.add_child(box)
+	var t := Label.new()
+	t.text = title
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.add_theme_font_size_override("font_size", 34)
+	t.add_theme_color_override("font_color", Color(0.48, 0.08, 0.06))
+	box.add_child(t)
+	var l := Label.new()
+	l.text = text
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.custom_minimum_size = Vector2(620, 0)
+	l.add_theme_font_size_override("font_size", 18)
+	l.add_theme_color_override("font_color", PARCH_TEXT)
+	box.add_child(l)
+	var b := _mk_button(box, btn, func():
+		_story_panel.visible = false
+		world_map.set_process_unhandled_input(true))
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	world_map.set_process_unhandled_input(false)
+
+
+# --- Statystyki i osiągnięcia ---
+const ACH_PATH := "user://achievements.json"
+const ACHIEVEMENTS := {
+	"pierwsza_krew": ["Pierwsza krew", "Wygraj pierwszą bitwę"],
+	"bez_strat": ["Bez strat", "Wygraj bitwę nie tracąc żadnej jednostki"],
+	"oblezyciel": ["Oblężyciel", "Zdobądź zamek"],
+	"husaria": ["Skrzydlaci", "Zrekrutuj husarię"],
+	"bogacz": ["Skarbiec koronny", "Miej 1000 zł naraz"],
+	"weteran": ["Weteran", "Wygraj 10 bitew w jednej partii"],
+	"zwyciezca": ["Zwycięzca", "Wygraj partię lub misję"],
+	"potop": ["Koniec Potopu", "Ukończ kampanię Potop szwedzki"],
+}
+var stats := {"turns": 0, "battles_won": 0, "battles_lost": 0, "units_lost": 0, "castles": 0, "recruited": 0, "gold_earned": 0, "rival_beaten": 0}
+
+
+func _record_battle(won: bool, survivors: Array) -> void:
+	var before := hero_army.size()
+	var after := survivors.size() if won else (survivors.size() if not survivors.is_empty() else 0)
+	stats["units_lost"] = int(stats["units_lost"]) + maxi(0, before - after)
+	if won:
+		stats["battles_won"] = int(stats["battles_won"]) + 1
+		_unlock("pierwsza_krew")
+		if after >= before and before > 0:
+			_unlock("bez_strat")
+		if int(stats["battles_won"]) >= 10:
+			_unlock("weteran")
+	else:
+		stats["battles_lost"] = int(stats["battles_lost"]) + 1
+
+
+func stats_text() -> String:
+	return "Tury: %d · Bitwy: %d wygranych / %d przegranych\nStracone jednostki: %d · Zrekrutowane: %d\nZdobyte zamki: %d · Zarobione złoto: %d" % [
+		int(stats["turns"]), int(stats["battles_won"]), int(stats["battles_lost"]),
+		int(stats["units_lost"]), int(stats["recruited"]), int(stats["castles"]), int(stats["gold_earned"])]
+
+
+func _ach_unlocked() -> Dictionary:
+	if not FileAccess.file_exists(ACH_PATH):
+		return {}
+	var d: Variant = JSON.parse_string(FileAccess.get_file_as_string(ACH_PATH))
+	return d if typeof(d) == TYPE_DICTIONARY else {}
+
+
+func _unlock(id: String) -> void:
+	var a := _ach_unlocked()
+	if a.has(id) or not ACHIEVEMENTS.has(id):
+		return
+	a[id] = Time.get_date_string_from_system()
+	var f := FileAccess.open(ACH_PATH, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(a))
+	_audio_play("victory")
+	if info_label:
+		info_label.text = "🏆 Osiągnięcie: %s — %s" % ACHIEVEMENTS[id]
+
+
+func _show_achievements() -> void:
+	var a := _ach_unlocked()
+	var lines: Array[String] = []
+	for id in ACHIEVEMENTS.keys():
+		var got := a.has(id)
+		lines.append("%s %s — %s%s" % ["★" if got else "☆", ACHIEVEMENTS[id][0], ACHIEVEMENTS[id][1], (" (%s)" % a[id]) if got else ""])
+	_show_story("Osiągnięcia %d/%d" % [a.size(), ACHIEVEMENTS.size()], "\n".join(lines), "Zamknij")
+	_story_panel.z_index = 10
+
+
+# =====================================================================
+# Siedem funkcji: bohaterowie, bestie, dyplomacja, targ, trudność, hot-seat
+# =====================================================================
+const HERO_DEFS := {
+	"polska": {"name": "Hetman Stefan Czarniecki", "atak": 1, "obrona": 0, "magia": 0},
+	"szwecja": {"name": "Król Karol Gustaw", "atak": 0, "obrona": 1, "magia": 0},
+	"osmanowie": {"name": "Wezyr Köprülü", "atak": 0, "obrona": 0, "magia": 1},
+	"moskwa": {"name": "Kniaź Jakub Czerkaski", "atak": 0, "obrona": 1, "magia": 0},
+	"kozacy": {"name": "Hetman Bohdan Chmielnicki", "atak": 1, "obrona": 0, "magia": 0},
+	"brandenburgia": {"name": "Elektor Fryderyk Wilhelm", "atak": 0, "obrona": 0, "magia": 1},
+}
+const DIFF_NAMES := ["Łatwy", "Normalny", "Trudny"]
+static var _pending_diff: int = 1
+static var _pending_hotseat: bool = false
+var difficulty: int = 1
+var treaty: String = "wojna" # wojna / rozejm / sojusz
+var treaty_turns: int = 0
+var hotseat: bool = false
+var cur_player: int = 1
+var _hs_other: Dictionary = {}
+var _f7_panel: ColorRect = null
+var _portrait: TextureRect = null
+var _diff_buttons: Array[Button] = []
+
+
+func _f7_setup() -> void:
+	var box: BoxContainer = $UI/TopBar/HBox
+	_portrait = TextureRect.new()
+	_portrait.custom_minimum_size = Vector2(96, 96)
+	_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	box.add_child(_portrait)
+	box.move_child(_portrait, hero_label.get_index())
+	_portrait.mouse_filter = Control.MOUSE_FILTER_STOP
+	_portrait.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_portrait.gui_input.connect(func(ev: InputEvent):
+		if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+			_show_hero_panel())
+	var db := Button.new()
+	db.text = "Dyplomacja"
+	db.pressed.connect(_show_diplomacy)
+	box.add_child(db)
+	var tb := Button.new()
+	tb.text = "Targ"
+	tb.pressed.connect(_show_market)
+	city_panel.vbox.add_child(tb)
+	city_panel.vbox.move_child(tb, city_panel.leave_button.get_index())
+
+
+func _f7_refresh_portrait() -> void:
+	if _portrait == null:
+		return
+	var path := "res://assets/heroes/hero_%s.png" % player_faction
+	if ResourceLoader.exists(path):
+		_portrait.texture = load(path)
+	_portrait.tooltip_text = "%s\nAtak %d · Obrona %d · Magia %d" % [hero_name, int(hero_skills["atak"]), int(hero_skills["obrona"]), int(hero_skills.get("magia", 0))]
+
+
+func _apply_hero_def(fac: String) -> void:
+	var h: Dictionary = HERO_DEFS.get(fac, HERO_DEFS["polska"])
+	hero_name = str(h["name"])
+	for k in ["atak", "obrona", "magia"]:
+		hero_skills[k] = int(h[k])
+	hero_mana = max_mana()
+
+
+func _f7_after_start() -> void:
+	_apply_hero_def(player_faction)
+	treaty = "wojna"
+	treaty_turns = 0
+	world_map.rival_frozen = hotseat
+	if hotseat:
+		cur_player = 1
+		var h: Dictionary = HERO_DEFS.get(rival_faction, HERO_DEFS["szwecja"])
+		_hs_other = {"faction": rival_faction, "gold": 400, "wood": 10, "ore": 10, "army": Array(rival_army),
+			"name": str(h["name"]), "level": 1, "xp": 0,
+			"skills": {"atak": int(h["atak"]), "obrona": int(h["obrona"]), "logistyka": 0, "magia": int(h["magia"])},
+			"artifacts": [], "mana": MANA_START, "spells": ["wizja", "blyskawica", "leczenie"], "mines": []}
+		rival_garrison.clear()
+		info_label.text = "Hot-seat: Gracz 1 (%s) vs Gracz 2 (%s). Zakończ turę, by oddać Maca." % [FACTIONS[player_faction]["name"], FACTIONS[rival_faction]["name"]]
+	_refresh_hud()
+
+
+func _f7_picker_extras(box: VBoxContainer) -> void:
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	var l := Label.new()
+	l.text = "Trudność AI:"
+	row.add_child(l)
+	_diff_buttons.clear()
+	for i in 3:
+		var b := Button.new()
+		b.toggle_mode = true
+		b.text = DIFF_NAMES[i]
+		b.button_pressed = i == _pending_diff
+		b.pressed.connect(func():
+			_pending_diff = i
+			for j in _diff_buttons.size():
+				_diff_buttons[j].button_pressed = j == i)
+		_diff_buttons.append(b)
+		row.add_child(b)
+	box.add_child(row)
+	var hs := CheckButton.new()
+	hs.text = "Hot-seat: 2 graczy na jednym Macu (Gracz 2 = rywal)"
+	hs.button_pressed = _pending_hotseat
+	hs.toggled.connect(func(on: bool): _pending_hotseat = on)
+	box.add_child(hs)
+
+
+# ---------- Modal ----------
+func _f7_modal(title: String, text: String, actions: Array) -> void:
+	if _f7_panel != null:
+		_f7_panel.queue_free()
+	_f7_panel = ColorRect.new()
+	_f7_panel.color = Color(0, 0, 0, 0.6)
+	_f7_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	$UI.add_child(_f7_panel)
+	var pc := PanelContainer.new()
+	pc.set_anchors_preset(Control.PRESET_CENTER)
+	pc.custom_minimum_size = Vector2(460, 0)
+	pc.position = get_viewport().get_visible_rect().size * 0.5 - Vector2(230, 200)
+	_f7_panel.add_child(pc)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	pc.add_child(v)
+	var t := Label.new()
+	t.text = title
+	t.add_theme_font_size_override("font_size", 24)
+	t.add_theme_color_override("font_color", Color(1.0, 0.85, 0.4))
+	v.add_child(t)
+	var d := Label.new()
+	d.text = text
+	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(d)
+	for a in actions:
+		var b := Button.new()
+		b.text = str(a[0])
+		var cb: Callable = a[1]
+		b.pressed.connect(cb)
+		v.add_child(b)
+	var c := Button.new()
+	c.text = "Zamknij"
+	c.pressed.connect(_f7_close)
+	v.add_child(c)
+
+
+func _f7_close() -> void:
+	if _f7_panel != null:
+		_f7_panel.queue_free()
+		_f7_panel = null
+
+
+# ---------- Bestie ----------
+func _beast_battle_units(army_id: String) -> Array:
+	var a: Dictionary = world_map.army_at(world_map.army_pos(army_id))
+	var kind := str(a.get("faction", "beast_wilk")).substr(6)
+	var out: Array = []
+	var slots := [Vector2i(9, 2), Vector2i(9, 4), Vector2i(9, 6), Vector2i(8, 3), Vector2i(8, 5)]
+	var n := 4 if kind == "wilk" else 2
+	for i in n:
+		if kind == "wilk":
+			out.append({"name": "Wilk", "unit_id": "wilk", "pos": slots[i], "hp": 20, "dmg": 7, "speed": 6, "color": Color(0.5, 0.5, 0.5)})
+		else:
+			out.append({"name": "Niedźwiedź", "unit_id": "niedzwiedz", "pos": slots[i], "hp": 60, "dmg": 12, "speed": 3, "color": Color(0.4, 0.25, 0.1)})
+	_audio_play("sfx_howl" if kind == "wilk" else "sfx_roar")
+	return out
+
+
+func _beast_loot() -> String:
+	var g := randi_range(100, 220)
+	var w := randi_range(2, 6)
+	var o := randi_range(2, 6)
+	gold += g
+	wood += w
+	ore += o
+	_audio_play("sfx_coins")
+	_refresh_hud()
+	return "Łup: +%d zł, +%d drewna, +%d rudy (łącznie z premią +50 zł)" % [g, w, o]
+
+
+# ---------- Dyplomacja ----------
+func _show_diplomacy() -> void:
+	if hotseat:
+		info_label.text = "W trybie hot-seat dyplomację prowadzicie przy jednym stole :)"
+		return
+	if _ui_busy():
+		return
+	var rp: int = rival_power()
+	var hp: int = hero_power()
+	var st := "Stan: WOJNA"
+	if treaty == "rozejm":
+		st = "Stan: ROZEJM (jeszcze %d tur)" % treaty_turns
+	elif treaty == "sojusz":
+		st = "Stan: SOJUSZ (+40 zł/turę dla obu stron, brak agresji)"
+	var txt := "%s\nRywal: %s · siła %d (twoja %d) · trudność %s\n\nRozejm (150 zł): 5 tur bez ataków rywala na ciebie i twoje zamki.\nSojusz (400 zł, wymaga rozejmu): trwały pokój i wspólny handel +40 zł/turę.\nAtak na rywala zrywa układ." % [st, FACTIONS[rival_faction]["name"], rp, hp, DIFF_NAMES[difficulty]]
+	var acts := []
+	if treaty == "wojna":
+		acts.append(["Zaproponuj rozejm (150 zł)", _propose.bind("rozejm")])
+	elif treaty == "rozejm":
+		acts.append(["Zaproponuj sojusz (400 zł)", _propose.bind("sojusz")])
+	if treaty != "wojna":
+		acts.append(["Wypowiedz wojnę", _f7_break_treaty])
+	_f7_modal("Dyplomacja", txt, acts)
+
+
+func _propose(kind: String) -> void:
+	var cost := 150 if kind == "rozejm" else 400
+	if gold < cost:
+		info_label.text = "Za mało złota (%d)." % cost
+		_f7_close()
+		return
+	var ratio := float(rival_power()) / maxf(1.0, float(hero_power()))
+	var limit: float = [3.0, 1.6, 1.1][difficulty]
+	if kind == "sojusz":
+		limit *= 0.9
+	_f7_close()
+	if ratio > limit:
+		info_label.text = "Rywal odrzuca %s — czuje się zbyt silny (%.1f×)." % [kind, ratio]
+		return
+	gold -= cost
+	treaty = kind
+	treaty_turns = 5 if kind == "rozejm" else 0
+	_audio_play("sfx_coins")
+	info_label.text = "Rywal przyjmuje %s!" % ("rozejm na 5 tur" if kind == "rozejm" else "sojusz")
+	_refresh_hud()
+
+
+func _f7_break_treaty() -> void:
+	if treaty != "wojna":
+		info_label.text = "Układ z rywalem zerwany — wojna!"
+	treaty = "wojna"
+	treaty_turns = 0
+	_f7_close()
+
+
+func _f7_turn_tick() -> int:
+	if treaty == "rozejm":
+		treaty_turns -= 1
+		if treaty_turns <= 0:
+			treaty = "wojna"
+			info_label.text = "Rozejm wygasł — znów wojna."
+	return 40 if treaty == "sojusz" else 0
+
+
+# ---------- Targ ----------
+func _show_market() -> void:
+	if _city_region_id == "" or not (_city_region_id in world_map.owned_region_ids):
+		info_label.text = "Targ dostępny tylko w twoim mieście."
+		return
+	var lvl := int(get_buildings(_city_region_id).get("targ", 0))
+	var buy := 30 - 4 * lvl
+	var sell := 8 + 3 * lvl
+	var txt := "Poziom targu: %d (rozbuduj Targ, by mieć lepsze kursy)\nKupno: %d zł/szt. · Sprzedaż: %d zł/szt.\nMasz: %d zł · %d drewna · %d rudy" % [lvl, buy, sell, gold, wood, ore]
+	_f7_modal("Targ", txt, [
+		["Kup 5 drewna (%d zł)" % (5 * buy), _trade.bind("wood", 5, buy)],
+		["Kup 5 rudy (%d zł)" % (5 * buy), _trade.bind("ore", 5, buy)],
+		["Sprzedaj 5 drewna (+%d zł)" % (5 * sell), _trade.bind("wood", -5, sell)],
+		["Sprzedaj 5 rudy (+%d zł)" % (5 * sell), _trade.bind("ore", -5, sell)],
+	])
+
+
+func _trade(res: String, qty: int, price: int) -> void:
+	var have: int = wood if res == "wood" else ore
+	if qty > 0 and gold < qty * price:
+		info_label.text = "Za mało złota."
+	elif qty < 0 and have < -qty:
+		info_label.text = "Za mało surowca."
+	else:
+		gold -= qty * price
+		if res == "wood":
+			wood += qty
+		else:
+			ore += qty
+		_audio_play("sfx_coins")
+	_refresh_hud()
+	_refresh_city()
+	_show_market()
+
+
+# ---------- Hot-seat ----------
+func _hs_pack() -> Dictionary:
+	var mines := []
+	for p in world_map._resources.keys():
+		if bool(world_map._resources[p].get("owned", false)):
+			mines.append(p)
+	return {"faction": player_faction, "gold": gold, "wood": wood, "ore": ore, "army": Array(hero_army),
+		"name": hero_name, "level": hero_level, "xp": hero_xp, "skills": hero_skills.duplicate(),
+		"artifacts": Array(hero_artifacts), "mana": hero_mana, "spells": Array(hero_spells), "mines": mines,
+		"pos": world_map.hero_pos, "regions": Array(world_map.owned_region_ids)}
+
+
+func _hs_swap() -> void:
+	var me := _hs_pack()
+	var other := _hs_other
+	var my_mines: Array = me["mines"]
+	var om: Array = []
+	for p in other.get("mines", []):
+		if not (p in my_mines):
+			om.append(p)
+	other["regions"] = Array(world_map.rival_region_ids)
+	var rp: Vector2i = world_map.army_pos(RIVAL_ID)
+	other["army"] = Array(rival_army) if rp.x >= 0 else []
+	if rp.x < 0:
+		var cp := Vector2i(-1, -1)
+		for rid in world_map.rival_region_ids:
+			cp = world_map.castle_pos(rid)
+			if cp.x >= 0:
+				break
+		rp = cp if cp.x >= 0 else Vector2i(other.get("pos", world_map.hero_pos))
+	other["pos"] = rp
+	world_map.remove_army(RIVAL_ID)
+	# zamiana stron
+	world_map.owned_region_ids.clear()
+	for r in other["regions"]:
+		world_map.owned_region_ids.append(str(r))
+	world_map.rival_region_ids.clear()
+	for r in me["regions"]:
+		world_map.rival_region_ids.append(str(r))
+	for p in world_map._resources.keys():
+		world_map._resources[p]["owned"] = p in om
+	player_faction = str(other["faction"])
+	gold = int(other["gold"])
+	wood = int(other["wood"])
+	ore = int(other["ore"])
+	hero_army.clear()
+	for u in other["army"]:
+		hero_army.append(str(u))
+	hero_name = str(other["name"])
+	hero_level = int(other["level"])
+	hero_xp = int(other["xp"])
+	hero_skills = other["skills"].duplicate()
+	hero_artifacts.clear()
+	for a in other["artifacts"]:
+		hero_artifacts.append(str(a))
+	hero_spells.clear()
+	for s in other["spells"]:
+		hero_spells.append(str(s))
+	hero_mana = int(other["mana"])
+	world_map._armies.erase(other["pos"])
+	world_map.hero_pos = other["pos"]
+	world_map._pre_battle_pos = other["pos"]
+	rival_faction = str(me["faction"])
+	rival_army.clear()
+	for u in me["army"]:
+		rival_army.append(str(u))
+	if not rival_army.is_empty():
+		world_map.place_army(me["pos"], {"id": RIVAL_ID, "name": "%s (Gracz %d)" % [me["name"], cur_player], "faction": "rival"})
+	_hs_other = me
+	cur_player = 3 - cur_player
+	_apply_logistics()
+	world_map._recompute_reach()
+	camera.position = HexMath.axial_to_pixel(world_map.hero_pos.x, world_map.hero_pos.y, world_map.hex_size)
+	enter_city_button.visible = world_map.is_on_castle()
+	world_map.queue_redraw()
+	_refresh_hud()
+
+
+func _hs_handoff() -> void:
+	_audio_play("sfx_hurrah")
+	_f7_modal("Tura: Gracz %d" % cur_player, "%s — %s.\nPrzekaż Maca drugiemu graczowi i kliknij Zamknij." % [FACTIONS[player_faction]["name"], hero_name], [])
+
+
+func _hs_check_end() -> void:
+	if game_won or game_lost:
+		return
+	if world_map.rival_region_ids.is_empty() and Array(_hs_other.get("army", [])).is_empty() == false and rival_army.is_empty():
+		game_won = true
+	elif world_map.rival_region_ids.is_empty() and rival_army.is_empty():
+		game_won = true
+	elif world_map.owned_region_ids.is_empty() and hero_army.is_empty():
+		game_lost = true
+	if game_won or game_lost:
+		_show_end_panel(game_won)
+		_end_title.text = "Gracz %d %s!" % [cur_player, "wygrywa" if game_won else "przegrywa"]
+
+
+func _f7_save() -> Dictionary:
+	var o := _hs_other.duplicate(true)
+	if o.has("pos"):
+		o["pos"] = [o["pos"].x, o["pos"].y]
+	var ms := []
+	for p in o.get("mines", []):
+		ms.append([p.x, p.y])
+	o["mines"] = ms
+	return {"difficulty": difficulty, "treaty": treaty, "treaty_turns": treaty_turns, "hotseat": hotseat, "cur_player": cur_player, "other": o}
+
+
+func _f7_load(d: Dictionary) -> void:
+	difficulty = int(d.get("difficulty", 1))
+	treaty = str(d.get("treaty", "wojna"))
+	treaty_turns = int(d.get("treaty_turns", 0))
+	hotseat = bool(d.get("hotseat", false))
+	cur_player = int(d.get("cur_player", 1))
+	world_map.rival_frozen = hotseat
+	var o: Dictionary = d.get("other", {}).duplicate(true)
+	if o.has("pos"):
+		o["pos"] = Vector2i(int(o["pos"][0]), int(o["pos"][1]))
+	var ms := []
+	for p in o.get("mines", []):
+		ms.append(Vector2i(int(p[0]), int(p[1])))
+	o["mines"] = ms
+	_hs_other = o
+
+
+# =====================================================================
+# Wielu bohaterów (max 4), edytor scenariusza, samouczek, muzyka
+# =====================================================================
+const MAX_HEROES := 4
+const HERO_COST := 800
+const HERO_NAMES := {
+	"polska": ["Jan Zamoyski", "Stanisław Żółkiewski", "Jan Karol Chodkiewicz", "Jerzy Lubomirski", "Michał Pac", "Stefan Potocki"],
+	"szwecja": ["Gustaw Horn", "Lennart Torstenson", "Magnus de la Gardie", "Arvid Wittenberg", "Carl Wrangel"],
+	"osmanowie": ["Kara Mustafa", "Ibrahim Pasza", "Hüseyin Pasza", "Mehmed Giray", "Ahmed Pasza"],
+	"moskwa": ["Iwan Chowański", "Aleksy Trubecki", "Wasyl Szeremietiew", "Jurij Dołgoruki", "Fiodor Kurakin"],
+	"kozacy": ["Iwan Wyhowski", "Iwan Bohun", "Maksym Krzywonos", "Iwan Sirko", "Daniło Nieczaj"],
+	"brandenburgia": ["Georg Derfflinger", "Otto von Sparr", "Johann von Waldeck", "Joachim Hennigs", "Hans von Görtzke"],
+}
+var my_heroes: Array = [] # nieaktywni bohaterowie gracza (Dictionary)
+var _hero_seq: int = 0
+var _btn_hire: Button = null
+var _btn_heroes: Button = null
+
+
+func _audio_track(t: String) -> void:
+	var am := _audio()
+	if am and am.has_method("play_track"):
+		am.play_track(t)
+
+
+func _all_armies_empty() -> bool:
+	if not hero_army.is_empty():
+		return false
+	for h in my_heroes:
+		if not Array(h.get("army", [])).is_empty():
+			return false
+	return true
+
+
+func hero_count() -> int:
+	return 1 + my_heroes.size()
+
+
+func _h4_setup() -> void:
+	var box: BoxContainer = $UI/TopBar/HBox
+	_btn_heroes = Button.new()
+	_btn_heroes.text = "Bohaterowie (H)"
+	_btn_heroes.pressed.connect(_show_heroes)
+	box.add_child(_btn_heroes)
+	_btn_hire = Button.new()
+	_btn_hire.text = "Werbuj bohatera (%d zł)" % HERO_COST
+	_btn_hire.pressed.connect(_hire_hero)
+	city_panel.vbox.add_child(_btn_hire)
+	city_panel.vbox.move_child(_btn_hire, city_panel.leave_button.get_index())
+	_tut_setup()
+
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_H:
+		if not _menu_root.visible and not _ui_busy() and not (get_viewport().gui_get_focus_owner() is LineEdit):
+			_show_heroes()
+			get_viewport().set_input_as_handled()
+
+
+func _pack_active() -> Dictionary:
+	_hero_seq += 1
+	return {"id": "my_hero_%d" % _hero_seq, "name": hero_name, "level": hero_level, "xp": hero_xp,
+		"skills": hero_skills.duplicate(), "artifacts": Array(hero_artifacts), "mana": hero_mana,
+		"spells": Array(hero_spells), "army": Array(hero_army), "mp": world_map.movement_left,
+		"pos": world_map.hero_pos, "fac": player_faction, "picks": pending_skill_picks}
+
+
+func _unpack_active(h: Dictionary) -> void:
+	hero_name = str(h["name"])
+	hero_level = int(h["level"])
+	hero_xp = int(h["xp"])
+	var sk: Dictionary = h["skills"]
+	for k in ["atak", "obrona", "logistyka", "magia"]:
+		hero_skills[k] = int(sk.get(k, 0))
+	hero_artifacts.clear()
+	for a in h["artifacts"]:
+		hero_artifacts.append(str(a))
+	hero_spells.clear()
+	for sp in h["spells"]:
+		hero_spells.append(str(sp))
+	hero_mana = int(h["mana"])
+	hero_army.clear()
+	for u in h["army"]:
+		hero_army.append(str(u))
+	world_map.hero_pos = h["pos"]
+	world_map._pre_battle_pos = h["pos"]
+	_apply_logistics()
+	world_map.movement_left = mini(int(h["mp"]), world_map.max_movement)
+
+
+func _place_reserve(h: Dictionary) -> void:
+	world_map.place_army(h["pos"], {"id": str(h["id"]), "name": "%s (twój bohater)" % h["name"], "faction": "myhero_" + str(h.get("fac", player_faction))})
+
+
+func _focus_hero() -> void:
+	world_map._recompute_reach()
+	var tw := create_tween()
+	tw.tween_property(camera, "position", HexMath.axial_to_pixel(world_map.hero_pos.x, world_map.hero_pos.y, world_map.hex_size), 0.35).set_trans(Tween.TRANS_SINE)
+	enter_city_button.visible = world_map.is_on_castle()
+	world_map.queue_redraw()
+	_refresh_hud()
+	_f7_refresh_portrait()
+
+
+func switch_hero(idx: int) -> void:
+	if idx < 0 or idx >= my_heroes.size() or world_map.is_animating:
+		return
+	var nxt: Dictionary = my_heroes[idx]
+	var cur := _pack_active()
+	world_map.remove_army(str(nxt["id"]))
+	my_heroes[idx] = cur
+	_place_reserve(cur)
+	_unpack_active(nxt)
+	_focus_hero()
+	_tut_event("hero")
+	info_label.text = "Aktywny bohater: %s · PR %d · armia: %s" % [hero_name, world_map.movement_left, army_summary()]
+
+
+func _free_cell_near(c: Vector2i) -> Vector2i:
+	var seen := {c: true}
+	var q: Array[Vector2i] = [c]
+	while not q.is_empty():
+		var cur: Vector2i = q.pop_front()
+		for n in HexMath.neighbors(cur):
+			if seen.has(n) or not world_map._cells.has(n):
+				continue
+			seen[n] = true
+			if world_map.is_blocked(n):
+				continue
+			if world_map._armies.has(n) or n == world_map.hero_pos or world_map._castles.has(n) or world_map._resources.has(n):
+				q.append(n)
+				continue
+			return n
+		if seen.size() > 200:
+			break
+	return Vector2i(-1, -1)
+
+
+func _hire_hero() -> void:
+	if hotseat:
+		info_label.text = "Werbowanie bohaterów niedostępne w hot-seat."
+		return
+	if _city_region_id == "" or not world_map.is_region_owned(_city_region_id):
+		info_label.text = "Bohatera zwerbujesz tylko we własnym zamku."
+		return
+	if hero_count() >= MAX_HEROES:
+		info_label.text = "Masz już %d bohaterów (maksimum)." % MAX_HEROES
+		return
+	if gold < HERO_COST:
+		info_label.text = "Za mało złota: bohater kosztuje %d zł." % HERO_COST
+		return
+	var cell := _free_cell_near(world_map.hero_pos)
+	if cell.x < 0:
+		info_label.text = "Brak wolnego pola przy zamku."
+		return
+	gold -= HERO_COST
+	var used := [hero_name]
+	for h in my_heroes:
+		used.append(str(h["name"]))
+	var nm := "Rotmistrz"
+	for n in HERO_NAMES.get(player_faction, HERO_NAMES["polska"]):
+		if not (n in used):
+			nm = n
+			break
+	var base: Dictionary = HERO_DEFS.get(player_faction, HERO_DEFS["polska"])
+	_hero_seq += 1
+	var h := {"id": "my_hero_%d" % _hero_seq, "name": nm, "level": 1, "xp": 0,
+		"skills": {"atak": randi() % 2, "obrona": randi() % 2, "logistyka": 0, "magia": int(base["magia"])},
+		"artifacts": [], "mana": MANA_START, "spells": ["wizja", "blyskawica", "leczenie"],
+		"army": Array(FACTIONS.get(player_faction, FACTIONS["polska"])["army"]).slice(0, 2),
+		"mp": world_map.max_movement, "pos": cell, "fac": player_faction, "picks": 0}
+	my_heroes.append(h)
+	_place_reserve(h)
+	world_map.reveal_around(cell, world_map.SIGHT_HERO)
+	_audio_play("sfx_coins")
+	_refresh_hud()
+	_refresh_city()
+	info_label.text = "Zwerbowano: %s (%d/%d). Przełącz: Bohaterowie (H)." % [nm, hero_count(), MAX_HEROES]
+	_tut_event("hire")
+
+
+func _show_heroes() -> void:
+	var acts: Array = []
+	for i in my_heroes.size():
+		var h: Dictionary = my_heroes[i]
+		acts.append(["▶ %s · poz. %d · PR %d · %d oddz." % [h["name"], int(h["level"]), int(h["mp"]), Array(h["army"]).size()],
+			func():
+				_f7_close()
+				switch_hero(i)])
+	var txt := "Aktywny: %s · poz. %d · PR %d · armia: %s\n\nBohaterów: %d/%d. Nowego zwerbujesz w swoim zamku (%d zł). Każdy ma własną armię i ruch." % [
+		hero_name, hero_level, world_map.movement_left, army_summary(), hero_count(), MAX_HEROES, HERO_COST]
+	_f7_modal("Bohaterowie", txt, acts)
+
+
+func _h4_meet(army_id: String) -> void:
+	var idx := -1
+	for i in my_heroes.size():
+		if str(my_heroes[i]["id"]) == army_id:
+			idx = i
+	if idx < 0:
+		return
+	var h: Dictionary = my_heroes[idx]
+	var give := func():
+		var arr: Array = h["army"]
+		while not hero_army.is_empty() and arr.size() < MAX_ARMY_SLOTS:
+			arr.append(hero_army.pop_back())
+		_f7_close()
+		_refresh_hud()
+		info_label.text = "Przekazano wojsko do: %s" % h["name"]
+	var take := func():
+		var arr: Array = h["army"]
+		while not arr.is_empty() and hero_army.size() < MAX_ARMY_SLOTS:
+			hero_army.append(str(arr.pop_back()))
+		_f7_close()
+		_refresh_hud()
+		info_label.text = "Przejęto wojsko od: %s" % h["name"]
+	_f7_modal("Spotkanie: %s" % h["name"], "Ty: %s\n%s: %d oddziałów." % [army_summary(), h["name"], Array(h["army"]).size()],
+		[["Przekaż swoje wojsko", give], ["Zabierz jego wojsko", take], ["Przełącz na niego", func():
+			_f7_close()
+			switch_hero(idx)]])
+
+
+func _h4_after_battle() -> void:
+	if not hero_army.is_empty() or my_heroes.is_empty():
+		return
+	# Bohater bez wojska ucieka z pola — przejmuje dowodzenie następny.
+	var lost := hero_name
+	var nxt: Dictionary = my_heroes.pop_front()
+	world_map.remove_army(str(nxt["id"]))
+	_unpack_active(nxt)
+	_focus_hero()
+	info_label.text = "%s rozbity i opuścił armię. Dowodzi teraz %s." % [lost, hero_name]
+
+
+func _h4_save() -> Dictionary:
+	var hs: Array = []
+	for h in my_heroes:
+		var c: Dictionary = h.duplicate(true)
+		c["pos"] = [h["pos"].x, h["pos"].y]
+		hs.append(c)
+	return {"heroes": hs, "seq": _hero_seq, "scenario": scenario}
+
+
+func _h4_load(d: Dictionary) -> void:
+	my_heroes.clear()
+	_hero_seq = int(d.get("seq", 0))
+	for c in d.get("heroes", []):
+		var h: Dictionary = c.duplicate(true)
+		h["pos"] = Vector2i(int(c["pos"][0]), int(c["pos"][1]))
+		my_heroes.append(h)
+		if world_map.army_pos(str(h["id"])).x < 0:
+			_place_reserve(h)
+	scenario = d.get("scenario", {})
+
+
+# ---------------- Edytor scenariusza ----------------
+const SCEN_DIR := "user://scenarios/"
+const GOALS := {"zamki": "Zdobądź N zamków", "stolica": "Zdobądź zamek rywala", "tury": "Przetrwaj N tur", "rywal": "Rozbij armię rywala N razy"}
+static var _pending_scenario: Dictionary = {}
+var scenario: Dictionary = {}
+var _editor_box: Control = null
+var _ed: Dictionary = {}
+var _ed_army_lbl: Label = null
+
+
+func _ed_default() -> Dictionary:
+	return {"name": "Mój scenariusz", "player_faction": "polska", "rival_faction": "szwecja", "start_region": "malopolska",
+		"rival_region": "inflanty", "gold": 600, "wood": 10, "ore": 10, "army": ["piechota", "piechota", "lucznicy"],
+		"rival_gold": 300, "goal": "zamki", "goal_n": 4, "difficulty": 1, "intro": "Opis scenariusza..."}
+
+
+func _castle_regions() -> Array:
+	var out: Array = []
+	for pos in world_map._castles.keys():
+		var r: Dictionary = world_map._castles[pos]
+		out.append([str(r.get("id", "")), "%s (%s)" % [r.get("capital", ""), r.get("name", "")]])
+	out.sort_custom(func(a, b): return str(a[1]) < str(b[1]))
+	return out
+
+
+func _ed_label(parent: Node, t: String) -> Label:
+	var l := Label.new()
+	l.text = t
+	l.custom_minimum_size = Vector2(130, 0)
+	l.add_theme_color_override("font_color", PARCH_TEXT)
+	parent.add_child(l)
+	return l
+
+
+func _ed_row(parent: Node, t: String) -> HBoxContainer:
+	var r := HBoxContainer.new()
+	parent.add_child(r)
+	_ed_label(r, t)
+	return r
+
+
+func _ed_option(parent: Node, t: String, items: Array, key: String) -> OptionButton:
+	var ob := OptionButton.new()
+	ob.custom_minimum_size = Vector2(240, 0)
+	for i in items.size():
+		ob.add_item(str(items[i][1]), i)
+		ob.set_item_metadata(i, items[i][0])
+		if str(items[i][0]) == str(_ed.get(key, "")):
+			ob.select(i)
+	ob.item_selected.connect(func(i: int): _ed[key] = ob.get_item_metadata(i))
+	_ed_row(parent, t).add_child(ob)
+	return ob
+
+
+func _ed_spin(parent: Node, t: String, key: String, mn: int, mx: int, st: int) -> void:
+	var sb := SpinBox.new()
+	sb.min_value = mn
+	sb.max_value = mx
+	sb.step = st
+	sb.value = int(_ed.get(key, mn))
+	sb.value_changed.connect(func(v: float): _ed[key] = int(v))
+	_ed_row(parent, t).add_child(sb)
+
+
+func _ed_refresh_army() -> void:
+	if _ed_army_lbl:
+		var names: Array = []
+		for u in _ed["army"]:
+			names.append(str(UNIT_CATALOG.get(u, {}).get("name", u)))
+		_ed_army_lbl.text = "Armia: " + (", ".join(names) if not names.is_empty() else "(pusta)")
+
+
+func _show_editor(data: Dictionary = {}) -> void:
+	if _ed.is_empty() or not data.is_empty():
+		_ed = data.duplicate(true) if not data.is_empty() else _ed_default()
+	if _editor_box != null:
+		_editor_box.queue_free()
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(440, 520)
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_editor_box = sc
+	_main_box.get_parent().add_child(sc)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 6)
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(v)
+	var t := Label.new()
+	t.text = "Edytor scenariusza"
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.add_theme_font_size_override("font_size", 22)
+	t.add_theme_color_override("font_color", Color(0.48, 0.08, 0.06))
+	v.add_child(t)
+	var ne := LineEdit.new()
+	ne.text = str(_ed["name"])
+	ne.custom_minimum_size = Vector2(240, 0)
+	ne.text_changed.connect(func(x: String): _ed["name"] = x)
+	_ed_row(v, "Nazwa").add_child(ne)
+	var facs: Array = []
+	for k in playable_factions():
+		facs.append([k, FACTIONS[k]["name"]])
+	var regs := _castle_regions()
+	_ed_option(v, "Frakcja gracza", facs, "player_faction")
+	_ed_option(v, "Zamek startowy", regs, "start_region")
+	_ed_option(v, "Frakcja rywala", facs, "rival_faction")
+	_ed_option(v, "Zamek rywala", regs, "rival_region")
+	_ed_spin(v, "Złoto", "gold", 0, 20000, 100)
+	_ed_spin(v, "Drewno", "wood", 0, 500, 5)
+	_ed_spin(v, "Ruda", "ore", 0, 500, 5)
+	_ed_spin(v, "Złoto rywala", "rival_gold", 0, 20000, 100)
+	var g: Array = []
+	for k in GOALS:
+		g.append([k, GOALS[k]])
+	_ed_option(v, "Cel", g, "goal")
+	_ed_spin(v, "N (cel)", "goal_n", 1, 60, 1)
+	_ed_option(v, "Trudność AI", [[0, DIFF_NAMES[0]], [1, DIFF_NAMES[1]], [2, DIFF_NAMES[2]]], "difficulty")
+	# armia startowa
+	var units: Array = []
+	for u in UNIT_ORDER + ["karolinska_piechota", "rajtarzy", "janczarzy", "sipahi", "strzelcy", "bojarzy", "kozacy", "molojcy", "muszkieterowie", "kirasjerzy"]:
+		if UNIT_CATALOG.has(u):
+			units.append([u, str(UNIT_CATALOG[u].get("name", u))])
+	var ar := _ed_row(v, "Dodaj oddział")
+	var uo := OptionButton.new()
+	for i in units.size():
+		uo.add_item(str(units[i][1]), i)
+		uo.set_item_metadata(i, units[i][0])
+	ar.add_child(uo)
+	var add := Button.new()
+	add.text = "+"
+	add.pressed.connect(func():
+		if Array(_ed["army"]).size() < MAX_ARMY_SLOTS:
+			_ed["army"].append(uo.get_item_metadata(uo.selected))
+		_ed_refresh_army())
+	ar.add_child(add)
+	var clr := Button.new()
+	clr.text = "Wyczyść"
+	clr.pressed.connect(func():
+		_ed["army"] = []
+		_ed_refresh_army())
+	ar.add_child(clr)
+	_ed_army_lbl = Label.new()
+	_ed_army_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_ed_army_lbl.custom_minimum_size = Vector2(400, 0)
+	_ed_army_lbl.add_theme_color_override("font_color", PARCH_TEXT)
+	v.add_child(_ed_army_lbl)
+	_ed_refresh_army()
+	var intro := TextEdit.new()
+	intro.text = str(_ed.get("intro", ""))
+	intro.custom_minimum_size = Vector2(400, 70)
+	intro.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	intro.text_changed.connect(func(): _ed["intro"] = intro.text)
+	v.add_child(intro)
+	var status := Label.new()
+	status.add_theme_color_override("font_color", PARCH_TEXT)
+	_mk_button(v, "▶ Graj scenariusz", _ed_play)
+	_mk_button(v, "Zapisz scenariusz", func(): status.text = _ed_save())
+	var lr := _ed_row(v, "Wczytaj")
+	var lo := OptionButton.new()
+	lo.custom_minimum_size = Vector2(200, 0)
+	for f in _ed_list():
+		lo.add_item(f)
+	lr.add_child(lo)
+	var lb := Button.new()
+	lb.text = "OK"
+	lb.pressed.connect(func():
+		if lo.item_count == 0:
+			return
+		var d := _ed_read(lo.get_item_text(lo.selected))
+		if not d.is_empty():
+			_show_editor(d))
+	lr.add_child(lb)
+	v.add_child(status)
+	_mk_button(v, "Wstecz", _show_main_menu)
+	_main_box.visible = false
+	sc.visible = true
+
+
+func _ed_file(n: String) -> String:
+	var safe := ""
+	for ch in n.strip_edges():
+		safe += ch if ch.is_valid_identifier() or ch.is_valid_int() or ch in "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ" else "_"
+	return SCEN_DIR + (safe if safe != "" else "scenariusz") + ".json"
+
+
+func _ed_save() -> String:
+	DirAccess.make_dir_recursive_absolute(SCEN_DIR)
+	var f := FileAccess.open(_ed_file(str(_ed["name"])), FileAccess.WRITE)
+	if f == null:
+		return "Błąd zapisu."
+	f.store_string(JSON.stringify(_ed, "\t"))
+	f.close()
+	return "Zapisano: %s" % _ed["name"]
+
+
+func _ed_list() -> Array:
+	var out: Array = []
+	var d := DirAccess.open(SCEN_DIR)
+	if d:
+		for fn in d.get_files():
+			if fn.ends_with(".json"):
+				out.append(fn.trim_suffix(".json"))
+	return out
+
+
+func _ed_read(n: String) -> Dictionary:
+	var p := SCEN_DIR + n + ".json"
+	if not FileAccess.file_exists(p):
+		return {}
+	var d: Variant = JSON.parse_string(FileAccess.get_file_as_string(p))
+	return d if typeof(d) == TYPE_DICTIONARY else {}
+
+
+func _ed_play() -> void:
+	if str(_ed["player_faction"]) == str(_ed["rival_faction"]):
+		for k in playable_factions():
+			if k != str(_ed["player_faction"]):
+				_ed["rival_faction"] = k
+				break
+	_pending_scenario = _ed.duplicate(true)
+	_pending_faction = str(_ed["player_faction"])
+	_pending_diff = int(_ed.get("difficulty", 1))
+	_skip_menu = true
+	get_tree().reload_current_scene()
+
+
+func _scen_apply() -> void:
+	if scenario.is_empty():
+		return
+	gold = int(scenario.get("gold", gold))
+	wood = int(scenario.get("wood", wood))
+	ore = int(scenario.get("ore", ore))
+	var arr: Array = scenario.get("army", [])
+	if not arr.is_empty():
+		hero_army.clear()
+		for u in arr:
+			hero_army.append(str(u))
+	rival_gold = int(scenario.get("rival_gold", rival_gold))
+	_refresh_hud()
+	_show_story(str(scenario.get("name", "Scenariusz")), str(scenario.get("intro", "")) + "\n\nCel: " + _scen_goal_text(), "Do boju!")
+
+
+func _scen_goal_text() -> String:
+	var n := int(scenario.get("goal_n", 1))
+	match str(scenario.get("goal", "zamki")):
+		"zamki":
+			return "zdobądź %d zamków (%d/%d)" % [n, world_map.owned_castle_count(), n]
+		"stolica":
+			return "zdobądź zamek rywala (%s)" % str(scenario.get("rival_region", ""))
+		"tury":
+			return "przetrwaj %d tur (%d/%d)" % [n, int(stats["turns"]), n]
+		"rywal":
+			return "rozbij armię rywala %d× (%d/%d)" % [n, int(stats["rival_beaten"]), n]
+	return ""
+
+
+func _scen_result() -> int:
+	if world_map.owned_castle_count() == 0 or (_all_armies_empty() and gold < int(UNIT_CATALOG["piechota"]["cost"])):
+		return -1
+	var n := int(scenario.get("goal_n", 1))
+	match str(scenario.get("goal", "zamki")):
+		"zamki":
+			return 1 if world_map.owned_castle_count() >= n else 0
+		"stolica":
+			return 1 if world_map.is_region_owned(str(scenario.get("rival_region", ""))) else 0
+		"tury":
+			return 1 if int(stats["turns"]) >= n else 0
+		"rywal":
+			return 1 if int(stats["rival_beaten"]) >= n else 0
+	return 0
+
+
+# ---------------- Samouczek ----------------
+static var _pending_tutorial: bool = false
+var _tut_step: int = -1
+var _tut_panel: PanelContainer = null
+var _tut_label: Label = null
+var _tut_next: Button = null
+const TUT_STEPS := [
+	["Witaj, hetmanie!", "To krótki samouczek. Pokażę ruch, miasto, rekrutację, bitwę i koniec tury. Kliknij Dalej.", ""],
+	["1. Ruch", "Kliknij jasne pole w pobliżu bohatera, aby się tam przemieścić. Najechanie pokazuje ścieżkę i koszt ruchu (PR).", "move"],
+	["2. Miasto", "Wróć na swój zamek i kliknij „Wejdź do miasta” (albo E). W mieście budujesz i rekrutujesz.", "city"],
+	["3. Rekrutacja", "W koszarach kup oddział (np. Piechotę). Tu też możesz zwerbować kolejnego bohatera (max 4).", "recruit"],
+	["4. Bitwa", "Wyjdź z miasta i zaatakuj chorągiew wroga albo wciśnij B (walka testowa). W bitwie klikasz jednostkę, a potem cel.", "battle"],
+	["5. Koniec tury", "Gdy skończy się ruch, kliknij „Koniec tury”. Dostaniesz złoto, a rywal wykona ruch.", "turn"],
+	["Gotowe!", "Znasz podstawy. Odkrywaj mapę (mgłę rozwiewa tylko bohater), zdobywaj kopalnie i zamki. Powodzenia!", "end"],
+]
+
+
+func _start_tutorial() -> void:
+	_pending_tutorial = true
+	_pending_faction = "polska"
+	_pending_diff = 0
+	_pending_hotseat = false
+	_skip_menu = true
+	get_tree().reload_current_scene()
+
+
+func _tut_setup() -> void:
+	world_map.hero_moved.connect(func(_q, _r, _m): _tut_event("move"))
+	world_map.city_entered.connect(func(_a, _b, _c, _d): _tut_event("city"))
+	city_panel.recruit_requested.connect(func(_u): _tut_event("recruit"))
+	battle_overlay.closed.connect(func(_w, _s = [], _e = []): _tut_event("battle"))
+	world_map.turn_ended.connect(func(_m): _tut_event("turn"))
+
+
+func _tut_start() -> void:
+	_tut_panel = PanelContainer.new()
+	_tut_panel.add_theme_stylebox_override("panel", _parch_sb(14))
+	_tut_panel.custom_minimum_size = Vector2(460, 0)
+	_tut_panel.position = Vector2(get_viewport().get_visible_rect().size.x * 0.5 - 330, 120)
+	$UI.add_child(_tut_panel)
+	var v := VBoxContainer.new()
+	_tut_panel.add_child(v)
+	_tut_label = Label.new()
+	_tut_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tut_label.custom_minimum_size = Vector2(430, 0)
+	_tut_label.add_theme_color_override("font_color", PARCH_TEXT)
+	v.add_child(_tut_label)
+	var row := HBoxContainer.new()
+	v.add_child(row)
+	_tut_next = Button.new()
+	_tut_next.text = "Dalej"
+	_tut_next.pressed.connect(func(): _tut_go(_tut_step + 1))
+	row.add_child(_tut_next)
+	var sk := Button.new()
+	sk.text = "Pomiń samouczek"
+	sk.pressed.connect(func(): _tut_go(TUT_STEPS.size()))
+	row.add_child(sk)
+	_tut_go(0)
+
+
+func _tut_go(i: int) -> void:
+	_tut_step = i
+	if i >= TUT_STEPS.size():
+		if _tut_panel:
+			_tut_panel.queue_free()
+			_tut_panel = null
+		_tut_step = -1
+		return
+	var st: Array = TUT_STEPS[i]
+	_tut_label.text = "%s\n%s" % [st[0], st[1]]
+	_tut_next.text = "Zakończ" if str(st[2]) == "end" else ("Dalej" if str(st[2]) == "" else "Pomiń krok")
+	_audio_play("click")
+
+
+func _tut_event(kind: String) -> void:
+	if _tut_step < 0 or _tut_step >= TUT_STEPS.size():
+		return
+	if str(TUT_STEPS[_tut_step][2]) == kind:
+		call_deferred("_tut_go", _tut_step + 1)
+
+
+# =====================================================================
+# Ranking / tabela wyników + panel bohatera (HoMM)
+# =====================================================================
+const RANK_PATH := "user://ranking.json"
+var _btn_scores: Button = null
+var _last_entry: Dictionary = {}
+var _rk_panel: ColorRect = null
+var _hp_panel: ColorRect = null
+
+
+func _rk_load() -> Array:
+	if not FileAccess.file_exists(RANK_PATH):
+		return []
+	var d: Variant = JSON.parse_string(FileAccess.get_file_as_string(RANK_PATH))
+	return d if typeof(d) == TYPE_ARRAY else []
+
+
+func _rk_score(won: bool) -> int:
+	var sc := int(stats["battles_won"]) * 50 + int(stats["castles"]) * 150 + int(stats["gold_earned"]) / 10 \
+		+ int(stats["rival_beaten"]) * 100 + hero_level * 40 + _ach_unlocked().size() * 25 \
+		- int(stats["units_lost"]) * 5 - int(stats["battles_lost"]) * 30
+	if won:
+		sc += 500 + maxi(0, 60 - int(stats["turns"])) * 10
+	sc = int(sc * [0.75, 1.0, 1.4][clampi(difficulty, 0, 2)])
+	return maxi(0, sc)
+
+
+func _rk_mode() -> String:
+	if campaign_mission > 0:
+		return "Potop %s" % ["I", "II", "III", "IV"][clampi(campaign_mission - 1, 0, 3)]
+	if not scenario.is_empty():
+		return "Scenariusz"
+	return "Hot-seat" if hotseat else "Partia"
+
+
+func _rk_record(won: bool) -> void:
+	_last_entry = {"date": Time.get_datetime_string_from_system(false, true).substr(0, 16),
+		"mode": _rk_mode(), "mission": campaign_mission, "faction": str(FACTIONS.get(player_faction, {}).get("name", player_faction)),
+		"hero": hero_name, "won": won, "turns": int(stats["turns"]), "bw": int(stats["battles_won"]), "bl": int(stats["battles_lost"]),
+		"gold": int(stats["gold_earned"]), "castles": int(stats["castles"]), "lost": int(stats["units_lost"]),
+		"ach": _ach_unlocked().size(), "diff": DIFF_NAMES[clampi(difficulty, 0, 2)], "score": _rk_score(won)}
+	var arr := _rk_load()
+	arr.append(_last_entry)
+	arr.sort_custom(func(a, b): return int(a["score"]) > int(b["score"]))
+	if arr.size() > 50:
+		arr.resize(50)
+	var f := FileAccess.open(RANK_PATH, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(arr))
+
+
+func _rk_place(e: Dictionary) -> int:
+	var arr := _rk_load()
+	for i in arr.size():
+		if str(arr[i].get("date")) == str(e.get("date")) and int(arr[i].get("score")) == int(e.get("score")):
+			return i + 1
+	return arr.size()
+
+
+## Suma najlepszych wygranych z każdej misji Potopu.
+func _rk_campaign() -> Dictionary:
+	var best := {}
+	for e in _rk_load():
+		var m := int(e.get("mission", 0))
+		if m > 0 and bool(e.get("won", false)) and (not best.has(m) or int(e["score"]) > int(best[m]["score"])):
+			best[m] = e
+	var t := {"done": best.size(), "turns": 0, "bw": 0, "gold": 0, "score": 0}
+	for m in best:
+		for k in ["turns", "bw", "gold", "score"]:
+			t[k] = int(t[k]) + int(best[m][k])
+	return t
+
+
+func _rk_cell(g: GridContainer, txt: String, col: Color, size: int = 15) -> void:
+	var l := Label.new()
+	l.text = txt
+	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_color_override("font_color", col)
+	g.add_child(l)
+
+
+func _show_ranking(highlight: Dictionary = {}) -> void:
+	if _rk_panel != null:
+		_rk_panel.queue_free()
+	_rk_panel = ColorRect.new()
+	_rk_panel.color = Color(0.03, 0.02, 0.01, 0.92)
+	_rk_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_rk_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_rk_panel.z_index = 20
+	$UI.add_child(_rk_panel)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_rk_panel.add_child(center)
+	var frame := PanelContainer.new()
+	frame.add_theme_stylebox_override("panel", _tex_sb(UI_WOOD, 14))
+	center.add_child(frame)
+	var parch := PanelContainer.new()
+	parch.add_theme_stylebox_override("panel", _parch_sb(22))
+	frame.add_child(parch)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 10)
+	parch.add_child(box)
+	var t := Label.new()
+	t.text = "Tabela wyników"
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.add_theme_font_size_override("font_size", 34)
+	t.add_theme_color_override("font_color", Color(0.48, 0.08, 0.06))
+	box.add_child(t)
+	var c := _rk_campaign()
+	var cl := Label.new()
+	cl.text = "Kampania Potop: ukończone misje %d/%d · tury %d · bitwy wygrane %d · złoto %d · łącznie %d pkt" % [
+		int(c["done"]), MISSIONS.size(), int(c["turns"]), int(c["bw"]), int(c["gold"]), int(c["score"])]
+	cl.add_theme_color_override("font_color", PARCH_TEXT)
+	cl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(cl)
+	var sc := ScrollContainer.new()
+	sc.custom_minimum_size = Vector2(980, 380)
+	box.add_child(sc)
+	var g := GridContainer.new()
+	g.columns = 11
+	g.add_theme_constant_override("h_separation", 16)
+	sc.add_child(g)
+	var head_col := Color(0.42, 0.12, 0.06)
+	for h in ["#", "Data", "Tryb", "Frakcja", "Wynik", "Tury", "Bitwy W/P", "Złoto", "Zamki", "Osiągn.", "Punkty"]:
+		_rk_cell(g, h, head_col, 16)
+	var arr := _rk_load()
+	if arr.is_empty():
+		_rk_cell(g, "—", PARCH_TEXT)
+		_rk_cell(g, "Brak rozegranych partii", PARCH_TEXT)
+		for i in 9:
+			_rk_cell(g, "", PARCH_TEXT)
+	for i in mini(arr.size(), 20):
+		var e: Dictionary = arr[i]
+		var hl := not highlight.is_empty() and str(e.get("date")) == str(highlight.get("date")) and int(e.get("score")) == int(highlight.get("score"))
+		var col := Color(0.55, 0.32, 0.0) if hl else PARCH_TEXT
+		for v in ["%d%s" % [i + 1, " ◀" if hl else ""], str(e.get("date", "")), "%s (%s)" % [e.get("mode", ""), e.get("diff", "")],
+				str(e.get("faction", "")), "Zwycięstwo" if bool(e.get("won", false)) else "Porażka", str(int(e.get("turns", 0))),
+				"%d/%d" % [int(e.get("bw", 0)), int(e.get("bl", 0))], str(int(e.get("gold", 0))), str(int(e.get("castles", 0))),
+				"%d/%d" % [int(e.get("ach", 0)), ACHIEVEMENTS.size()], str(int(e.get("score", 0)))]:
+			_rk_cell(g, v, col)
+	var b := _mk_button(box, "Zamknij", func(): _rk_panel.queue_free(); _rk_panel = null)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+
+
+# ---------- Panel bohatera ----------
+func _show_hero_panel() -> void:
+	if _hp_panel != null:
+		_hp_panel.queue_free()
+	_hp_panel = ColorRect.new()
+	_hp_panel.color = Color(0, 0, 0, 0.65)
+	_hp_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_hp_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	_hp_panel.z_index = 15
+	$UI.add_child(_hp_panel)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_hp_panel.add_child(center)
+	var frame := PanelContainer.new()
+	frame.add_theme_stylebox_override("panel", _tex_sb(UI_WOOD, 14))
+	center.add_child(frame)
+	var parch := PanelContainer.new()
+	parch.add_theme_stylebox_override("panel", _parch_sb(20))
+	frame.add_child(parch)
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", 12)
+	parch.add_child(root)
+	# Nagłówek: portret + cechy
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 18)
+	root.add_child(top)
+	var por := TextureRect.new()
+	por.custom_minimum_size = Vector2(150, 150)
+	por.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	por.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	var pp := "res://assets/heroes/hero_%s.png" % player_faction
+	if ResourceLoader.exists(pp):
+		por.texture = load(pp)
+	top.add_child(por)
+	var info := VBoxContainer.new()
+	top.add_child(info)
+	var nm := Label.new()
+	nm.text = hero_name
+	nm.add_theme_font_size_override("font_size", 28)
+	nm.add_theme_color_override("font_color", Color(0.48, 0.08, 0.06))
+	info.add_child(nm)
+	var xp_txt := "MAX" if hero_level >= HERO_MAX_LEVEL else "%d/%d" % [hero_xp, xp_to_next()]
+	var sub := Label.new()
+	sub.text = "%s · Poziom %d · Doświadczenie %s\nPunkty ruchu %d/%d · Mana %d/%d" % [
+		str(FACTIONS.get(player_faction, {}).get("name", player_faction)), hero_level, xp_txt,
+		world_map.movement_left, world_map.max_movement, hero_mana, max_mana()]
+	sub.add_theme_color_override("font_color", PARCH_TEXT)
+	info.add_child(sub)
+	var sk := HBoxContainer.new()
+	sk.add_theme_constant_override("separation", 10)
+	info.add_child(sk)
+	for k in [["atak", "Atak", ""], ["obrona", "Obrona", ""], ["magia", "Magia", ""], ["logistyka", "Logistyka", ""]]:
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _sb(SIDE_CARD, SIDE_BORDER, 2, 6, 8))
+		var l := Label.new()
+		var bonus := ""
+		if k[0] == "atak" and artifact_fx("dmg") > 0:
+			bonus = " (+%d)" % artifact_fx("dmg")
+		l.text = "%s%s\n%d%s" % [k[2], k[1], int(hero_skills.get(k[0], 0)), bonus]
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l.custom_minimum_size = Vector2(90, 0)
+		l.add_theme_color_override("font_color", SIDE_GOLD)
+		card.add_child(l)
+		sk.add_child(card)
+	# Wojsko
+	var wl := Label.new()
+	wl.text = "Wojsko (%d oddziałów)" % hero_army.size()
+	wl.add_theme_font_size_override("font_size", 20)
+	wl.add_theme_color_override("font_color", Color(0.42, 0.12, 0.06))
+	root.add_child(wl)
+	var counts: Dictionary = {}
+	for id in hero_army:
+		counts[id] = int(counts.get(id, 0)) + 1
+	var ag := GridContainer.new()
+	ag.columns = 7
+	ag.add_theme_constant_override("h_separation", 8)
+	root.add_child(ag)
+	if counts.is_empty():
+		var el := Label.new()
+		el.text = "(brak wojska — zrekrutuj w koszarach)"
+		el.add_theme_color_override("font_color", PARCH_TEXT)
+		ag.add_child(el)
+	for id in counts:
+		var def: Dictionary = UNIT_CATALOG.get(id, {})
+		var slot := PanelContainer.new()
+		slot.add_theme_stylebox_override("panel", _sb(SIDE_CARD, SIDE_BORDER, 2, 6, 6))
+		var v := VBoxContainer.new()
+		slot.add_child(v)
+		var tr := TextureRect.new()
+		tr.custom_minimum_size = Vector2(84, 84)
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		tr.texture = UnitArt.texture_for(str(id))
+		v.add_child(tr)
+		var ul := Label.new()
+		ul.text = "%s ×%d" % [str(def.get("name", id)), int(counts[id])]
+		ul.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		ul.add_theme_color_override("font_color", SIDE_TEXT)
+		ul.add_theme_font_size_override("font_size", 13)
+		v.add_child(ul)
+		var st := Label.new()
+		st.text = "HP %d · Atk %d · Szyb %d" % [int(def.get("hp", 0)) + artifact_hp_bonus(), int(def.get("dmg", 0)) + artifact_dmg_bonus(), int(def.get("speed", 0))]
+		st.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		st.add_theme_color_override("font_color", SIDE_GOLD)
+		st.add_theme_font_size_override("font_size", 12)
+		v.add_child(st)
+		slot.tooltip_text = "%s\nŻycie %d · Obrażenia %d · Szybkość %d · Koszt %d zł" % [str(def.get("name", id)), int(def.get("hp", 0)), int(def.get("dmg", 0)), int(def.get("speed", 0)), int(def.get("cost", 0))]
+		ag.add_child(slot)
+	# Artefakty
+	var al := Label.new()
+	al.text = "Artefakty i przedmioty (%d)" % hero_artifacts.size()
+	al.add_theme_font_size_override("font_size", 20)
+	al.add_theme_color_override("font_color", Color(0.42, 0.12, 0.06))
+	root.add_child(al)
+	var arg := GridContainer.new()
+	arg.columns = 2
+	arg.add_theme_constant_override("h_separation", 20)
+	root.add_child(arg)
+	if hero_artifacts.is_empty():
+		var nl := Label.new()
+		nl.text = "(brak — szukaj skrzyń i artefaktów na mapie)"
+		nl.add_theme_color_override("font_color", PARCH_TEXT)
+		arg.add_child(nl)
+	for aid in hero_artifacts:
+		var ad: Dictionary = world_map.ARTIFACT_DEFS.get(aid, {})
+		var row := HBoxContainer.new()
+		var it := TextureRect.new()
+		it.custom_minimum_size = Vector2(48, 48)
+		it.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		it.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		it.texture = world_map.artifact_texture(aid)
+		row.add_child(it)
+		var tl := Label.new()
+		tl.text = "%s\n%s" % [str(ad.get("name", aid)), str(ad.get("desc", ""))]
+		tl.custom_minimum_size = Vector2(280, 0)
+		tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		tl.add_theme_color_override("font_color", PARCH_TEXT)
+		row.add_child(tl)
+		arg.add_child(row)
+	var stl := Label.new()
+	stl.text = "Ta partia: " + stats_text().replace("\n", " · ")
+	stl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	stl.custom_minimum_size = Vector2(700, 0)
+	stl.add_theme_font_size_override("font_size", 13)
+	stl.add_theme_color_override("font_color", PARCH_TEXT)
+	root.add_child(stl)
+	var b := _mk_button(root, "Zamknij", _close_hero_panel)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	world_map.set_process_unhandled_input(false)
+
+
+func _close_hero_panel() -> void:
+	if _hp_panel != null:
+		_hp_panel.queue_free()
+		_hp_panel = null
+	world_map.set_process_unhandled_input(true)
+
+
+# =====================================================================
+# --- Panel: lista bohaterów i miast, skrót do miasta (C) ---
+var _nav_box: VBoxContainer = null
+var _nav_heroes: VBoxContainer = null
+var _nav_cities: VBoxContainer = null
+var _nav_city_idx: int = -1
+
+
+func _nav_setup() -> void:
+	var box: BoxContainer = $UI/TopBar/HBox
+	_nav_box = VBoxContainer.new()
+	_nav_box.add_theme_constant_override("separation", 3)
+	box.add_child(_nav_box)
+	var grid := box.get_node_or_null("ActionGrid")
+	_nav_box.get_parent().move_child(_nav_box, grid.get_index() if grid else end_turn_button.get_index())
+	_nav_heroes = _nav_section("Bohaterowie")
+	_nav_cities = _nav_section("Miasta (C)")
+	var btn := Button.new()
+	btn.text = "Do miasta (C)"
+	btn.tooltip_text = "Stoisz na zamku: wejdź. Inaczej: pokaż kolejne swoje miasto (jeśli w zasięgu — idź tam)."
+	btn.pressed.connect(_nav_city_hotkey)
+	if grid:
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		btn.custom_minimum_size = Vector2(0, 30)
+		btn.add_theme_font_size_override("font_size", 13)
+		grid.add_child(btn)
+	else:
+		box.add_child(btn)
+	_nav_refresh()
+
+
+func _nav_section(title: String) -> VBoxContainer:
+	var l := Label.new()
+	l.text = title
+	l.add_theme_font_size_override("font_size", 13)
+	l.add_theme_color_override("font_color", Color(0.95, 0.85, 0.55))
+	_nav_box.add_child(l)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 2)
+	_nav_box.add_child(v)
+	return v
+
+
+func _nav_btn(parent: Control, txt: String, cb: Callable, active: bool = false) -> Button:
+	var b := Button.new()
+	b.text = txt
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.clip_text = true
+	b.custom_minimum_size = Vector2(0, 24)
+	b.add_theme_font_size_override("font_size", 12)
+	if active:
+		b.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
+		b.disabled = false
+	b.pressed.connect(cb)
+	parent.add_child(b)
+	return b
+
+
+func _nav_refresh() -> void:
+	if _nav_heroes == null:
+		return
+	for c in _nav_heroes.get_children():
+		c.queue_free()
+	for c in _nav_cities.get_children():
+		c.queue_free()
+	_nav_btn(_nav_heroes, "★ %s · poz.%d · PR %d · %d oddz." % [hero_name, hero_level, world_map.movement_left, hero_army.size()], func(): _focus_hero(), true)
+	for i in my_heroes.size():
+		var h: Dictionary = my_heroes[i]
+		_nav_btn(_nav_heroes, "%s · poz.%d · PR %d · %d oddz." % [h["name"], int(h["level"]), int(h["mp"]), Array(h["army"]).size()], func(): switch_hero(i))
+	for rid in _nav_owned_cities():
+		var rname := str(world_map._region_by_id.get(rid, {}).get("capital", rid))
+		var here: bool = world_map.castle_pos(rid) == world_map.hero_pos
+		_nav_btn(_nav_cities, ("⚑ " if here else "") + rname, _nav_goto_city.bind(rid), here)
+
+
+func _nav_owned_cities() -> Array:
+	var out: Array = []
+	for rid in world_map.owned_region_ids:
+		if world_map.castle_pos(str(rid)).x >= 0:
+			out.append(str(rid))
+	return out
+
+
+func _nav_goto_city(rid: String) -> void:
+	if world_map.is_animating or _ui_busy():
+		return
+	var cp: Vector2i = world_map.castle_pos(rid)
+	if cp.x < 0:
+		return
+	if cp == world_map.hero_pos:
+		world_map.try_enter_city()
+		return
+	var tw := create_tween()
+	tw.tween_property(camera, "position", HexMath.axial_to_pixel(cp.x, cp.y, world_map.hex_size), 0.35).set_trans(Tween.TRANS_SINE)
+	var rname := str(world_map._region_by_id.get(rid, {}).get("capital", rid))
+	if world_map._reachable.has(cp):
+		info_label.text = "Marsz do: %s" % rname
+		if await world_map.try_move_to(cp):
+			world_map.try_enter_city()
+	else:
+		info_label.text = "%s — poza zasięgiem w tej turze (kliknij mapę, by iść w tę stronę)." % rname
+
+
+func _nav_city_hotkey() -> void:
+	if world_map.is_on_castle():
+		world_map.try_enter_city()
+		return
+	var lst := _nav_owned_cities()
+	if lst.is_empty():
+		info_label.text = "Nie masz żadnego miasta."
+		return
+	_nav_city_idx = (_nav_city_idx + 1) % lst.size()
+	_nav_goto_city(str(lst[_nav_city_idx]))
