@@ -61,11 +61,24 @@ var _hi: MeshInstance3D
 var _focus := "ratusz"
 var _pick: Array = []
 var _anchors: Dictionary = {}
+## Orbit wokół dziedzińca. Kadr jest przesunięty w lewo, żeby nie wchodził w panel.
+var _yaw := 0.717
+var _pitch := 0.413
+var _dist := 26.0
+var _look := Vector3(0.2, 1.05, 0.0)
+var _press_btn := -1
+var _press_pos := Vector2.ZERO
+var _dragged := false
+var _margin_applied := -1.0
 
 
 func _ready() -> void:
 	visible = false
 	_trace = "--city" in OS.get_cmdline_user_args()
+	get_viewport().size_changed.connect(func() -> void:
+		_margin_applied = -1.0
+		if _shown:
+			_apply_cam())
 
 
 func present(faction: String, owned: bool, buildings: Dictionary) -> void:
@@ -137,6 +150,48 @@ func debug_pick(bid: String) -> void:
 
 
 ## Rzut punktu budynku na ekran i ten sam test AABB co klik myszą.
+func debug_yaw() -> float:
+	return _yaw
+
+
+func debug_screen(bid: String) -> Vector2:
+	if _cam == null or not _anchors.has(bid):
+		return Vector2(-1, -1)
+	var p: Vector3 = _anchors[bid]["pos"]
+	return _cam.unproject_position(p + Vector3(0, 1.0, 0))
+
+
+func debug_world_screen(p: Vector3) -> Vector2:
+	if _cam == null:
+		return Vector2(-1, -1)
+	return _cam.unproject_position(p)
+
+
+func debug_margin() -> float:
+	return _panel_margin(get_viewport().get_visible_rect().size)
+
+
+func debug_panel_left() -> float:
+	var main := get_tree().current_scene
+	if main:
+		var center := main.get_node_or_null("UI/CityPanel/Center") as Control
+		if center and center.is_visible_in_tree():
+			var left := center.get_global_rect().position.x
+			if left > 80.0:
+				return left
+	return get_viewport().get_visible_rect().size.x * 0.62
+
+
+func debug_ground_max_x() -> float:
+	var best := -9999.0
+	var c := Vector3(-0.45, 0.35, 0.45)
+	var hx := 14.6 * 0.5
+	var hz := 11.2 * 0.5
+	for s in [Vector3(hx, 0, hz), Vector3(hx, 0, -hz), Vector3(-hx, 0, hz), Vector3(-hx, 0, -hz)]:
+		best = maxf(best, debug_world_screen(c + s).x)
+	return best
+
+
 func debug_ray(bid: String) -> String:
 	if _cam == null or not _anchors.has(bid):
 		return ""
@@ -177,6 +232,7 @@ func _ensure_rig() -> void:
 		_apply_sky()
 		if _cam:
 			_cam.current = true
+			_apply_cam()
 		return
 	_rig = Node3D.new()
 	_rig.name = "Rig"
@@ -201,11 +257,10 @@ func _ensure_rig() -> void:
 	_cam.name = "CityCam"
 	_cam.fov = 34.0
 	_cam.near = 0.08
-	_cam.far = 80.0
-	_cam.position = Vector3(11.2, 8.4, 12.6)
+	_cam.far = 90.0
 	_rig.add_child(_cam)
-	_cam.look_at(Vector3(0.2, 1.05, 0.0), Vector3.UP)
 	_cam.current = true
+	_apply_cam()
 
 
 func _apply_sky() -> void:
@@ -247,7 +302,8 @@ func _add_built(bid: String, pos: Vector3, built: Dictionary) -> void:
 
 func _ground(st: Dictionary) -> void:
 	var tint: Color = st["ground_tint"]
-	_plane(Vector2(20.0, 16.0), Vector3(0, -0.02, 0.2), str(st["ground"]), tint, 5.0)
+	# Płaszczyzna kończy się przy murach. Daleki prawy róg nie może wejść w panel.
+	_plane(Vector2(14.6, 11.2), Vector3(-0.45, -0.02, 0.45), str(st["ground"]), tint, 3.6)
 	_box(_root, Vector3(2.4, 0.04, 11.2), Vector3(0, 0.02, 0.2), str(st["path"]), 3.0, Color.WHITE)
 	_box(_root, Vector3(12.4, 0.045, 2.2), Vector3(0, 0.03, 0.4), str(st["path"]), 3.0, Color.WHITE)
 	# podwórze z ubitej ziemi
@@ -434,13 +490,13 @@ func _dress(st: Dictionary) -> void:
 	_box(_root, Vector3(0.08, 0.7, 0.08), Vector3(-1.25, 0.7, 0.15), str(st["log"]), 1.0)
 	_box(_root, Vector3(0.75, 0.06, 0.08), Vector3(-1.55, 1.05, 0.15), str(st["log"]), 1.0)
 	# drzewa za murami
-	_pine(_root, Vector3(-8.2, 0, -2.4), st, 1.15)
-	_pine(_root, Vector3(-7.6, 0, 2.8), st, 0.85)
-	_pine(_root, Vector3(8.0, 0, -3.2), st, 1.0)
-	_pine(_root, Vector3(7.4, 0, 3.4), st, 1.25)
+	_pine(_root, Vector3(-7.2, 0, -2.2), st, 1.15)
+	_pine(_root, Vector3(-6.9, 0, 2.5), st, 0.85)
+	_pine(_root, Vector3(6.55, 0, -2.4), st, 1.0)
+	_pine(_root, Vector3(6.4, 0, 2.7), st, 1.25)
 	# łan i krzak
-	_box(_root, Vector3(2.2, 0.35, 1.4), Vector3(-8.0, 0.18, 0.2), "wheat_field", 2.0, Color(0.95, 0.86, 0.45))
-	_sph(_root, 0.35, Vector3(7.8, 0.28, 0.4), str(st["foliage"]))
+	_box(_root, Vector3(2.0, 0.35, 1.3), Vector3(-6.6, 0.18, 0.15), "wheat_field", 2.0, Color(0.95, 0.86, 0.45))
+	_sph(_root, 0.32, Vector3(6.7, 0.26, 0.35), str(st["foliage"]))
 	# beczki przy kuźni
 	_cyl(_root, 0.18, 0.32, Vector3(2.7, 0.16, 2.55), str(st["log"]), Color.WHITE, 8)
 	_cyl(_root, 0.16, 0.28, Vector3(3.05, 0.14, 2.4), str(st["wood"]), Color.WHITE, 8)
@@ -595,13 +651,84 @@ func _no_shadows(n: Node) -> void:
 		_no_shadows(ch)
 
 
+func _process(_dt: float) -> void:
+	if not _shown or _cam == null:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	var margin := _panel_margin(vp)
+	if absf(margin - _margin_applied) > 1.0:
+		_margin_applied = margin
+		_fit_margin()
+
+
+## Prawy panel rekrutacji zasłania kawałek viewportu. Środek kadru ląduje
+## na środku wolnego pasa z lewej, a nie na środku całego okna.
+func _panel_margin(vp: Vector2) -> float:
+	var main := get_tree().current_scene
+	if main:
+		var center := main.get_node_or_null("UI/CityPanel/Center") as Control
+		if center and center.is_visible_in_tree():
+			var left := center.get_global_rect().position.x
+			if left > 80.0 and left < vp.x:
+				# Zapas, żeby skraj dziedzińca nie dotykał panelu.
+				return vp.x - left + 96.0
+	return minf(480.0, vp.x * 0.42)
+
+
+func _apply_cam() -> void:
+	if _cam == null:
+		return
+	var cp := cos(_pitch)
+	var off := Vector3(sin(_yaw) * cp, sin(_pitch), cos(_yaw) * cp) * _dist
+	_cam.position = _look + off
+	if _cam.global_position.distance_squared_to(_look) > 0.01:
+		_cam.look_at(_look, Vector3.UP)
+	_fit_margin()
+
+
+func _fit_margin() -> void:
+	if _cam == null:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	if vp.y < 2.0:
+		return
+	var margin := _panel_margin(vp)
+	_margin_applied = margin
+	# h_offset przesuwa kamerę w jej prawo: dziedziniec zostaje na lewej połowie.
+	_cam.h_offset = _dist * tan(deg_to_rad(_cam.fov * 0.5)) * margin / vp.y
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if not _shown or _cam == null:
 		return
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		var bid := _pick_at(event.position)
-		if bid != "":
-			building_picked.emit(bid)
+	if event is InputEventMouseButton and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE]:
+		if event.pressed:
+			_press_btn = event.button_index
+			_press_pos = event.position
+			_dragged = false
+		elif event.button_index == _press_btn:
+			if event.button_index == MOUSE_BUTTON_LEFT and not _dragged:
+				var bid := _pick_at(event.position)
+				if bid != "":
+					building_picked.emit(bid)
+			_press_btn = -1
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventMouseMotion and _press_btn != -1:
+		if not _dragged and event.position.distance_to(_press_pos) < 5.0:
+			return
+		_dragged = true
+		_yaw -= event.relative.x * 0.008
+		_pitch = clampf(_pitch + event.relative.y * 0.005, deg_to_rad(16.0), deg_to_rad(72.0))
+		_apply_cam()
+		get_viewport().set_input_as_handled()
+		return
+	if event is InputEventKey and event.pressed and (event.keycode == KEY_Q or event.keycode == KEY_R):
+		if get_viewport().gui_get_focus_owner() is LineEdit:
+			return
+		_yaw += 0.14 if event.keycode == KEY_Q else -0.14
+		_apply_cam()
+		get_viewport().set_input_as_handled()
 
 
 func _pick_at(screen: Vector2) -> String:

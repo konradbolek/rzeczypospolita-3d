@@ -1579,13 +1579,13 @@ func toggle_magic_panel() -> void:
 			"" if known else " [wymaga Wieży magów]"]
 		b.disabled = not known or not right_place or hero_mana < int(def["cost"])
 	_magic_panel.visible = true
-	battle_overlay.field.set_process_input(false)
+	battle_overlay.field.set_clicks_enabled(false)
 	world_map.set_process_unhandled_input(false)
 
 
 func _close_magic_panel() -> void:
 	_magic_panel.visible = false
-	battle_overlay.field.set_process_input(true)
+	battle_overlay.field.set_clicks_enabled(true)
 	if not _ui_busy() and not _menu_root.visible:
 		world_map.set_process_unhandled_input(true)
 
@@ -3846,6 +3846,17 @@ func _nav_city_hotkey() -> void:
 static var _shot_stage := 0
 
 
+func _debug_click(at: Vector2) -> void:
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.position = at
+	ev.global_position = at
+	ev.pressed = true
+	get_viewport().push_input(ev, true)
+	ev.pressed = false
+	get_viewport().push_input(ev, true)
+
+
 func _debug_battle() -> void:
 	await get_tree().create_timer(1.2).timeout
 	var siege := "--battle-siege" in OS.get_cmdline_user_args()
@@ -3858,20 +3869,26 @@ func _debug_battle() -> void:
 	print("BATTLE_MAP_IN_TREE ", _world3d != null and _world3d.is_inside_tree())
 	var field = battle_overlay.field
 	var clicked := false
-	var moved := false
-	var input_ok := false
+	var screen_sel := false
+	var panel_ok := false
 	for i in 240:
 		await get_tree().process_frame
 		if i % 30 == 0:
 			print("BATTLE_FRAME ", i, " ready=", field.is_battle_ready(), " alive=", field.debug_frames())
 		if not clicked and field.is_battle_ready():
 			clicked = true
-			print("BATTLE_INPUT ", field.debug_click_cell(Vector2i(1, 2)))
-		elif clicked and not moved and field.is_battle_ready() and field.debug_selected() >= 0 and field.debug_frames() >= 3:
-			moved = true
-			input_ok = true
-			print("BATTLE_INPUT_OK selected=", field.debug_selected())
-			print("BATTLE_INPUT_MOVE ", field.debug_click_cell(Vector2i(2, 2)))
+			var screen: Vector2 = field.debug_screen_of(Vector2i(1, 2))
+			_debug_click(screen)
+			screen_sel = field.debug_selected() >= 0
+			print("BATTLE_CLICK ", screen, " sel=", field.debug_selected(), " pick=", field.debug_pick_screen(screen))
+			var keep: int = field.debug_selected()
+			# Prawy panel (x > 980). Klik w HUD nie może ruszyć bitwy.
+			_debug_click(Vector2(1180, 320))
+			panel_ok = field.debug_selected() == keep
+			print("BATTLE_PANEL ", panel_ok)
+			if screen_sel:
+				_debug_click(field.debug_screen_of(Vector2i(2, 2)))
+				print("BATTLE_CLICK_MOVE")
 	var sun_off: bool = not bool(field.debug_shadow())
 	var labels: int = int(field.debug_label3d())
 	var tri: int = int(field.debug_triplanar())
@@ -3880,6 +3897,9 @@ func _debug_battle() -> void:
 	print("BATTLE_LABEL3D ", labels)
 	print("BATTLE_TRIPLANAR ", tri)
 	print("BATTLE_MAP_IN_TREE ", _world3d != null and _world3d.is_inside_tree())
+	var moved_to: Vector2i = field.debug_unit_cell(0)
+	var input_ok: bool = screen_sel and panel_ok and moved_to == Vector2i(2, 2)
+	print("BATTLE_MOVED ", moved_to, " input_ok=", input_ok)
 	print("BATTLE_ALIVE_END ", alive)
 	var tex := get_viewport().get_texture()
 	if tex:
@@ -3903,14 +3923,24 @@ func _debug_city() -> void:
 	var entered: bool = bool(world_map.try_enter_city())
 	print("CITY_OPEN ", entered)
 	var ready := false
+	var spun := false
 	for i in 120:
 		await get_tree().process_frame
 		if i % 30 == 0:
 			print("CITY_FRAME ", i, " ready=", _city3d.debug_ready(), " meshes=", _city3d.debug_mesh_count())
 		if not ready and _city3d.debug_ready() and _city3d.debug_mesh_count() > 10:
 			ready = true
-			_city3d.debug_pick("koszary")
-			print("CITY_INPUT ", city_panel.debug_selected())
+			var yaw0: float = _city3d.debug_yaw()
+			var key := InputEventKey.new()
+			key.keycode = KEY_Q
+			key.physical_keycode = KEY_Q
+			key.pressed = true
+			get_viewport().push_input(key, true)
+			spun = absf(_city3d.debug_yaw() - yaw0) > 0.05
+			print("CITY_ORBIT ", yaw0, " -> ", _city3d.debug_yaw(), " ok=", spun)
+			var arm: Vector2 = _city3d.debug_screen("koszary")
+			_debug_click(arm)
+			print("CITY_CLICK ", arm, " sel=", city_panel.debug_selected())
 			print("CITY_RAY ", _city3d.debug_ray("ratusz"))
 	print("CITY_SUN ", _city3d.debug_shadow())
 	print("CITY_MAP_IN_TREE ", _world3d != null and _world3d.is_inside_tree())
@@ -3921,13 +3951,18 @@ func _debug_city() -> void:
 			shot.save_png("/tmp/city_3d.png")
 			print("CITY_SHOT /tmp/city_3d.png")
 	var ray_ok: bool = str(_city3d.debug_ray("koszary")) == "koszary"
+	var edge_x: float = float(_city3d.debug_ground_max_x())
+	var hall_x: float = _city3d.debug_screen("ratusz").x
+	var ui_left: float = float(_city3d.debug_panel_left())
+	var framed: bool = edge_x > 0.0 and edge_x < ui_left - 36.0 and hall_x < ui_left - 80.0
 	print("CITY_RAY_KOSZARY ", _city3d.debug_ray("koszary"))
+	print("CITY_FRAME edge=", edge_x, " hall=", hall_x, " ui_left=", ui_left, " ok=", framed)
 	_on_left_city()
 	for _i in 20:
 		await get_tree().process_frame
 	var back: bool = _world3d != null and _world3d.is_inside_tree()
 	print("CITY_MAP_BACK ", back)
-	var ok: bool = ready and str(city_panel.debug_selected()) == "koszary" and not bool(_city3d.debug_shadow()) and ray_ok and back
+	var ok: bool = ready and spun and framed and str(city_panel.debug_selected()) == "koszary" and not bool(_city3d.debug_shadow()) and ray_ok and back
 	print("CITY_OK" if ok else "CITY_FAIL")
 	get_tree().quit()
 
