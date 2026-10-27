@@ -221,6 +221,16 @@ func _audio_volume() -> float:
 	return float(am.volume) if am else 0.8
 
 func _ready() -> void:
+	var v3 := preload("res://scripts/world_3d.gd").new()
+	v3.name = "World3D"
+	add_child(v3)
+	v3.setup(world_map, camera)
+	world_map.view3d = v3
+	if "--menushot" in OS.get_cmdline_user_args():
+		var t := get_tree()
+		t.create_timer(2.0).timeout.connect(func(): t.root.get_texture().get_image().save_png("/tmp/rzp3d_m.png"); t.quit())
+	if "--shot" in OS.get_cmdline_user_args():
+		_shot.call_deferred()
 	world_map.hex_selected.connect(_on_hex_selected)
 	world_map.hero_moved.connect(_on_hero_moved)
 	world_map.artifact_picked.connect(_on_artifact_picked)
@@ -3783,3 +3793,20 @@ func _nav_city_hotkey() -> void:
 		return
 	_nav_city_idx = (_nav_city_idx + 1) % lst.size()
 	_nav_goto_city(str(lst[_nav_city_idx]))
+
+
+static var _shot_stage := 0
+func _shot() -> void:
+	_shot_stage += 1
+	if _shot_stage == 1:
+		_start_with_faction(playable_factions()[0])
+		return
+	var t := get_tree()
+	await t.create_timer(2.0).timeout
+	t.root.get_texture().get_image().save_png("/tmp/rzp3d.png")
+	var v3 = get_node("World3D")
+	v3.yaw = 0.8
+	camera.zoom = Vector2(1.4, 1.4)
+	await t.create_timer(1.0).timeout
+	t.root.get_texture().get_image().save_png("/tmp/rzp3d_b.png")
+	t.quit()

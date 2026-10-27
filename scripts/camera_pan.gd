@@ -17,6 +17,10 @@ func _process(delta: float) -> void:
 		dir.y -= 1.0
 	if Input.is_action_pressed("pan_down") or Input.is_key_pressed(KEY_DOWN):
 		dir.y += 1.0
+	var v3 := get_parent().get_node_or_null("World3D")
+	if v3 and dir != Vector2.ZERO:
+		var y: float = v3.yaw
+		dir = Vector2(cos(y) * dir.x + sin(y) * dir.y, -sin(y) * dir.x + cos(y) * dir.y)
 	if dir != Vector2.ZERO:
 		position += dir.normalized() * pan_speed * delta / zoom.x
 
@@ -38,7 +42,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		_touches[event.index] = event.position
 		if _touches.size() == 1:
 			if event.relative.length() > 2.0:
-				position -= event.relative / zoom.x
+				position -= event.relative / zoom.x * 0.5
 		elif _touches.size() >= 2:
 			var k: Array = _touches.keys()
 			var d: float = (_touches[k[0]] as Vector2).distance_to(_touches[k[1]])

@@ -1711,7 +1711,17 @@ func _view_rect() -> Rect2:
 	return Rect2(a, b - a).abs().grow(hex_size * 3.0)
 
 
+var view3d: Node = null # widok 3D (World3D); gdy ustawiony, 2D nie rysuje mapy
+
+func _mouse_local(sp: Vector2) -> Vector2:
+	if view3d:
+		return view3d.screen_to_map(sp)
+	return get_global_transform_with_canvas().affine_inverse() * sp
+
+
 func _draw() -> void:
+	if view3d:
+		return
 	var vr := _view_rect()
 	for key in _cells.keys():
 		var cell: Vector2i = key
@@ -1856,7 +1866,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if is_animating:
 		return
 	if event is InputEventMouseMotion:
-		var local: Vector2 = get_global_transform_with_canvas().affine_inverse() * event.position
+		var local: Vector2 = _mouse_local(event.position)
 		var axial := HexMath.pixel_to_axial(local, hex_size)
 		if axial != _hover:
 			_hover = axial
@@ -1866,7 +1876,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_path_preview.clear()
 			queue_redraw()
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		var local: Vector2 = get_global_transform_with_canvas().affine_inverse() * event.position
+		var local: Vector2 = _mouse_local(event.position)
 		var axial := HexMath.pixel_to_axial(local, hex_size)
 		if not _cells.has(axial):
 			return
